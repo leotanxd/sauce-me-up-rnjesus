@@ -15,7 +15,7 @@ class SauceGenerator:
             headers={
                 "User-Agent": (
                     "SauceGenerator/1.0 "
-                    "(https://github.com/leojhttan/sauce-generator)"
+                    "(https://github.com/leojhttan/sauce-me-up-rnjesus)"
                 )
             },
         )
