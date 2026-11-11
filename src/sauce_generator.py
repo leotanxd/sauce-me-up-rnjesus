@@ -1,71 +1,221 @@
+"""Generate and open a random English-language nhentai gallery.
+
+This version uses keyless API access:
+- No Authorization header or API key is required.
+- A descriptive User-Agent header identifies this application.
+- The application searches for English galleries through the API.
+- It selects one gallery at random and opens its public website page.
+- Image URLs, if needed, are built only from API-provided CDN data.
+"""
+
 import json
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+import random
+import time
 import webbrowser
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+
+SEARCH_URL = "https://nhentai.net/api/v2/search"
+GALLERY_DETAIL_URL_TEMPLATE = "https://nhentai.net/api/v2/galleries/{gallery_id}"
+CDN_URL = "https://nhentai.net/api/v2/cdn"
+PUBLIC_GALLERY_URL_TEMPLATE = "https://nhentai.net/g/{gallery_id}/"
+
+USER_AGENT = (
+    "SauceMeUpRNJesus/1.0 "
+    "(https://github.com/leojhttan/sauce-me-up-rnjesus)"
+)
+
+REQUEST_TIMEOUT_SECONDS = 10
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY_SECONDS = 2
+MAX_JITTER_SECONDS = 1
 
 
 class SauceGenerator:
+    """Retrieves and opens a random English-language gallery."""
+
     def __init__(self, order_count: int = 1, browser=None):
         self.order_count = order_count
         self.browser = browser if browser is not None else webbrowser
 
-    def get_random_gallery_id(self, api_url: str) -> int:
-        request = Request(
-            api_url,
-            headers={
-                "User-Agent": (
-                    "SauceGenerator/1.0 "
-                    "(https://github.com/leojhttan/sauce-me-up-rnjesus)"
-                )
-            },
-        )
-        with urlopen(request, timeout=10) as response:
-            if response.status != 200:
-                raise RuntimeError(f"API returned HTTP {response.status}: {api_url}")
+    def _build_search_url(self) -> str:
+        """Build the API search URL for English-language galleries."""
+        query = urlencode({"query": "language:english"})
+        return f"{SEARCH_URL}?{query}"
 
-            gallery = json.loads(response.read().decode("utf-8"))
-            return int(gallery["id"])
+    def _retry_delay(self, attempt: int) -> float:
+        """Calculate exponential backoff with random jitter."""
+        base_delay = INITIAL_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+        jitter = random.uniform(0, MAX_JITTER_SECONDS)
+        return base_delay + jitter
+
+    def _request_json(self, url: str) -> dict:
+        """Request JSON data without authentication, with retries."""
+        last_error = None
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            request = Request(
+                url,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/json",
+                },
+            )
+
+            try:
+                with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                    if response.status != 200:
+                        raise RuntimeError(
+                            f"API returned HTTP {response.status}: {url}"
+                        )
+
+                    return json.loads(response.read().decode("utf-8"))
+
+            except HTTPError as error:
+                status_code = error.code
+
+                if status_code == 429 and attempt < MAX_RETRIES:
+                    delay = self._retry_delay(attempt)
+                    print(f"Rate limited. Retrying in {delay:.1f} seconds...")
+                    time.sleep(delay)
+                    last_error = error
+                    continue
+
+                if status_code == 401:
+                    raise RuntimeError(
+                        "The API rejected the request because authentication "
+                        "is required for this endpoint."
+                    ) from error
+
+                if status_code == 403:
+                    raise RuntimeError(
+                        "The API refused the request. This endpoint may be "
+                        "restricted or unavailable to this client."
+                    ) from error
+
+                if status_code == 404:
+                    raise RuntimeError(
+                        "The requested API resource could not be found."
+                    ) from error
+
+                if 500 <= status_code < 600:
+                    if attempt < MAX_RETRIES:
+                        delay = self._retry_delay(attempt)
+                        print(
+                            f"API server error {status_code}. "
+                            f"Retrying in {delay:.1f} seconds..."
+                        )
+                        time.sleep(delay)
+                        last_error = error
+                        continue
+
+                raise RuntimeError(
+                    f"Could not retrieve data from the API: HTTP {status_code}"
+                ) from error
+
+            except (URLError, TimeoutError) as error:
+                last_error = error
+
+                if attempt < MAX_RETRIES:
+                    delay = self._retry_delay(attempt)
+                    print(f"Network issue. Retrying in {delay:.1f} seconds...")
+                    time.sleep(delay)
+                    continue
+
+                raise RuntimeError(
+                    f"Could not connect to the API: {error}"
+                ) from error
+
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                raise RuntimeError(
+                    "The API returned data that could not be understood."
+                ) from error
+
+        raise RuntimeError(f"Could not retrieve data after retries: {last_error}")
+
+    def get_random_english_gallery(self) -> dict:
+        """Return one randomly selected English-language gallery."""
+        search_results = self._request_json(self._build_search_url())
+        galleries = search_results.get("result", [])
+
+        if not isinstance(galleries, list) or not galleries:
+            raise RuntimeError(
+                "No English-language galleries were returned by the API."
+            )
+
+        return random.choice(galleries)
+
+    def get_gallery_details(self, gallery_id: int) -> dict:
+        """Optionally retrieve more information about a selected gallery."""
+        detail_url = GALLERY_DETAIL_URL_TEMPLATE.format(gallery_id=gallery_id)
+        return self._request_json(detail_url)
+
+    def build_gallery_url(self, gallery: dict) -> str:
+        """Create the public nhentai website link for a gallery."""
+        try:
+            gallery_id = int(gallery["id"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise RuntimeError(
+                "The API response did not contain a valid gallery ID."
+            ) from error
+
+        return PUBLIC_GALLERY_URL_TEMPLATE.format(gallery_id=gallery_id)
+
+    def build_media_url(self, relative_media_path: str) -> str:
+        """Build an image URL using an API-provided CDN server and path."""
+        if not relative_media_path:
+            raise RuntimeError("The API did not provide a media path.")
+
+        cdn_data = self._request_json(CDN_URL)
+        servers = cdn_data.get("servers", [])
+
+        if not isinstance(servers, list) or not servers:
+            raise RuntimeError("The API did not provide an available CDN server.")
+
+        server = random.choice(servers)
+
+        if not isinstance(server, str) or not server:
+            raise RuntimeError("The API returned an invalid CDN server.")
+
+        # Use the API-provided path exactly as returned.
+        return f"{server.rstrip('/')}/{relative_media_path.lstrip('/')}"
 
     def open(self) -> None:
-        api_url = "https://nhentai.net/api/v2/galleries/random"
-
+        """Find one random English gallery and open its website page."""
         try:
-            gallery_id = self.get_random_gallery_id(api_url)
-        except HTTPError as error:
-            print(f"Could not retrieve a random gallery: {error}")
-            return
-        except URLError as error:
-            print(f"Could not retrieve a random gallery: {error}")
-            return
-        except TimeoutError as error:
-            print(f"Could not retrieve a random gallery: {error}")
-            return
-        except (KeyError, TypeError, ValueError) as error:
-            print(f"The API response did not contain a valid gallery: {error}")
-            return
+            gallery = self.get_random_english_gallery()
+            gallery_url = self.build_gallery_url(gallery)
         except RuntimeError as error:
             print(error)
             return
 
-        gallery_url = f"https://nhentai.net/g/{gallery_id}"
-        print("w response")
+        gallery_id = gallery.get("id", "Unknown")
+        title = gallery.get("title", {}).get("pretty", "Untitled")
+
+        print("Here is your random English sauce:")
         print(f"Gallery ID: {gallery_id}")
+        print(f"Title: {title}")
         print(gallery_url)
+
         self.browser.open(gallery_url, 0, True)
 
 
 class SauceApp:
-    def __init__(self, generate: SauceGenerator):
-        self.generate = generate
+    """Runs the sauce generator a chosen number of times."""
+
+    def __init__(self, generator: SauceGenerator):
+        self.generator = generator
 
     def run(self) -> None:
-        for _ in range(self.generate.order_count):
-            self.generate.open()
+        for _ in range(self.generator.order_count):
+            self.generator.open()
 
 
 def main() -> None:
-    generate = SauceGenerator()
-    app = SauceApp(generate=generate)
+    generator = SauceGenerator()
+    app = SauceApp(generator=generator)
     app.run()
 
 
