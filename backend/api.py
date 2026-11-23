@@ -95,44 +95,74 @@ def _first_media_path(detail: dict, gallery: dict) -> str | None:
     return None
 
 
-def _next_sauce() -> dict:
-    try:
-        gallery = _generator.get_random_english_gallery()
-        gallery_id = int(gallery["id"])
-    except Exception as error:  # upstream failure / bad payload
-        raise HTTPException(status_code=502, detail=str(error)) from error
-
-    detail: dict = {}
-    try:
-        raw_detail = _generator.get_gallery_details(gallery_id)
-        detail = _as_dict(raw_detail.get("result", raw_detail))
-    except Exception:
-        detail = {}  # details are optional; the search result may suffice
-
-    first_path = _first_media_path(detail, gallery)
-    first_image_url: str | None = None
-    if first_path:
-        if first_path.startswith("http://") or first_path.startswith("https://"):
-            first_image_url = first_path
-        else:
-            try:
-                first_image_url = _generator.build_media_url(first_path)
-            except Exception:
-                first_image_url = None
-
-    title = _as_dict(detail.get("title") or gallery.get("title"))
-    return {
-        "id": gallery_id,
-        "title": (
-            title.get("pretty")
-            or title.get("english")
-            or gallery.get("english_title")  # flat string on search items
-            or "Untitled"
-        ),
-        "url": _generator.build_gallery_url(gallery),
-        # ONLY the first retrieval item. Do not add pages[] here.
-        "firstImageUrl": first_image_url,
+def _is_english(detail: dict) -> bool | None:
+    """Check the detail's language tags. None = unknown (no tags to check)."""
+    tags = detail.get("tags")
+    if not isinstance(tags, list) or not tags:
+        return None
+    languages = {
+        t.get("name")
+        for t in tags
+        if isinstance(t, dict) and t.get("type") == "language"
     }
+    if not languages:
+        return None
+    return "english" in languages
+
+
+def _next_sauce() -> dict:
+    # The search already filters language:english; still, verify each pick
+    # against its detail tags and re-roll a non-English result, so what the
+    # API returns — and the frontend displays — is English sauce.
+    for _attempt in range(5):
+        try:
+            gallery = _generator.get_random_english_gallery()
+            gallery_id = int(gallery["id"])
+        except Exception as error:  # upstream failure / bad payload
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+        detail: dict = {}
+        try:
+            raw_detail = _generator.get_gallery_details(gallery_id)
+            detail = _as_dict(raw_detail.get("result", raw_detail))
+        except Exception:
+            detail = {}  # details are optional; the search result may suffice
+
+        if _is_english(detail) is False:
+            continue  # not English — pick another gallery
+
+        first_path = _first_media_path(detail, gallery)
+        first_image_url: str | None = None
+        if first_path:
+            if first_path.startswith("http://") or first_path.startswith("https://"):
+                first_image_url = first_path
+            else:
+                try:
+                    first_image_url = _generator.build_media_url(first_path)
+                except Exception:
+                    first_image_url = None
+
+        # English title FIRST: the search item's english_title, then the
+        # detail's title.english. title.pretty is often the Japanese title
+        # even for English galleries, so it is only a last resort.
+        title_obj = _as_dict(detail.get("title"))
+        return {
+            "id": gallery_id,
+            "title": (
+                gallery.get("english_title")
+                or title_obj.get("english")
+                or title_obj.get("pretty")
+                or "Untitled"
+            ),
+            "url": _generator.build_gallery_url(gallery),
+            # ONLY the first retrieval item. Do not add pages[] here.
+            "firstImageUrl": first_image_url,
+        }
+
+    raise HTTPException(
+        status_code=502,
+        detail="Could not find an English-language gallery. Please retry.",
+    )
 
 
 @app.get("/api/health")
