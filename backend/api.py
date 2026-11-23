@@ -45,35 +45,53 @@ def _as_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _first_media_path(*sources: dict) -> str | None:
-    """Find the first page/cover media path in an API payload, defensively.
+def _first_media_path(detail: dict, gallery: dict) -> str | None:
+    """Return the FIRST page's relative media path, per the API v2 docs.
 
-    The upstream API has returned several shapes over time, so check the
-    known ones in order and return the FIRST item only:
-      gallery["thumbnail"], gallery["cover"], gallery["images"]["pages"][0],
-      gallery["pages"][0], gallery["thumbnail_url"] / ["cover_url"]
-    A value may be a string path/URL or a dict with url/path/src.
+    Gallery detail (GalleryDetailResponse) carries:
+      pages[]  — each {number, path, width, height, thumbnail, ...}
+      cover    — {path, width, height}
+      thumbnail— {path, width, height}
+    Search items (GalleryListItem) carry only a flat ``thumbnail`` string.
+    Paths are relative and must be used exactly as returned; the caller
+    prefixes a CDN server from GET /api/v2/cdn (see build_media_url).
+    Priority: first page by number, then cover, then thumbnail.
     """
-    def from_value(v: Any) -> str | None:
+    def path_of(v: Any) -> str | None:
         if isinstance(v, str) and v:
             return v
         if isinstance(v, dict):
-            for key in ("url", "path", "src"):
-                if isinstance(v.get(key), str) and v[key]:
-                    return v[key]
+            p = v.get("path") or v.get("url")
+            if isinstance(p, str) and p:
+                return p
         return None
 
-    for src in sources:
-        for key in ("thumbnail_url", "cover_url", "thumbnail", "cover"):
-            found = from_value(src.get(key))
+    pages = detail.get("pages")
+    if isinstance(pages, list) and pages:
+        dict_pages = [p for p in pages if isinstance(p, dict)]
+        if dict_pages:
+            first = min(
+                dict_pages,
+                key=lambda p: p.get("number") if isinstance(p.get("number"), int) else 0,
+            )
+            found = path_of(first)  # first page only — never the rest
             if found:
                 return found
-        images = _as_dict(src.get("images"))
-        pages = images.get("pages") or src.get("pages")
-        if isinstance(pages, list) and pages:
-            found = from_value(pages[0])  # first page only — never the rest
-            if found:
-                return found
+
+    for source, key in (
+        (detail, "cover"),
+        (detail, "thumbnail"),
+        (gallery, "thumbnail"),  # flat string on search items
+        (gallery, "cover"),
+    ):
+        found = path_of(source.get(key))
+        if found:
+            return found
+
+    # Legacy v1 shape fallback: {"images": {"pages": [...]}}
+    legacy_pages = _as_dict(detail.get("images")).get("pages")
+    if isinstance(legacy_pages, list) and legacy_pages:
+        return path_of(legacy_pages[0])
     return None
 
 
@@ -102,10 +120,15 @@ def _next_sauce() -> dict:
             except Exception:
                 first_image_url = None
 
-    title = _as_dict(gallery.get("title") or detail.get("title"))
+    title = _as_dict(detail.get("title") or gallery.get("title"))
     return {
         "id": gallery_id,
-        "title": title.get("pretty") or title.get("english") or "Untitled",
+        "title": (
+            title.get("pretty")
+            or title.get("english")
+            or gallery.get("english_title")  # flat string on search items
+            or "Untitled"
+        ),
         "url": _generator.build_gallery_url(gallery),
         # ONLY the first retrieval item. Do not add pages[] here.
         "firstImageUrl": first_image_url,

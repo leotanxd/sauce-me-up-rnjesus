@@ -39,6 +39,7 @@ class SauceGenerator:
     def __init__(self, order_count: int = 1, browser=None):
         self.order_count = order_count
         self.browser = browser if browser is not None else webbrowser
+        self._cdn_data: dict | None = None  # cached GET /api/v2/cdn response
 
     def _build_search_url(self) -> str:
         """Build the API search URL for English-language galleries."""
@@ -164,14 +165,44 @@ class SauceGenerator:
         return PUBLIC_GALLERY_URL_TEMPLATE.format(gallery_id=gallery_id)
 
     def build_media_url(self, relative_media_path: str) -> str:
-        """Build an image URL using an API-provided CDN server and path."""
+        """Build an image URL using an API-provided CDN server and path.
+
+        Per the API v2 docs (GET /api/v2/cdn), the CDN config returns
+        ``image_servers`` and ``thumb_servers`` — there is no ``servers``
+        key. A full URL is one server + the path, used exactly as the
+        API returned it. Thumbnail paths live on the thumb servers;
+        page and cover paths live on the image servers.
+        """
         if not relative_media_path:
             raise RuntimeError("The API did not provide a media path.")
 
-        cdn_data = self._request_json(CDN_URL)
-        servers = cdn_data.get("servers", [])
+        if self._cdn_data is None:
+            self._cdn_data = self._request_json(CDN_URL)
+        cdn_data = self._cdn_data
 
-        if not isinstance(servers, list) or not servers:
+        filename = relative_media_path.rsplit("/", 1)[-1]
+        stem = filename.split(".", 1)[0]
+        is_thumbnail = "thumb" in filename or (
+            stem.endswith("t") and stem[:-1].isdigit()
+        )
+
+        if is_thumbnail:
+            candidates = [
+                cdn_data.get("thumb_servers"),
+                cdn_data.get("image_servers"),
+                cdn_data.get("servers"),  # legacy key, if it ever returns
+            ]
+        else:
+            candidates = [
+                cdn_data.get("image_servers"),
+                cdn_data.get("servers"),  # legacy key, if it ever returns
+                cdn_data.get("thumb_servers"),
+            ]
+
+        servers = next(
+            (s for s in candidates if isinstance(s, list) and s), None
+        )
+        if not servers:
             raise RuntimeError("The API did not provide an available CDN server.")
 
         server = random.choice(servers)
