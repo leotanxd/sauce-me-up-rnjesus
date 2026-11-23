@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Dark by default — requirement 1. The Film Camera template's light
+   tokens are replaced with a true-black feed theme. */
+@theme {
+  --color-background: oklch(0 0 0);
+  --color-foreground: oklch(0.985 0 0);
+  --color-muted-foreground: oklch(0.708 0 0);
+  --color-border: oklch(0.269 0 0);
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  background: #000;
+  color: var(--color-foreground);
+  overscroll-behavior: none;
+}
+
+/* TikTok-like feed — requirement 2: vertical scroll-snap, one card per screen */
+.sauce-feed {
+  height: 100dvh;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+}
+.sauce-feed::-webkit-scrollbar { display: none; }
+
+.sauce-card {
+  height: 100dvh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+/* Blur toggle — requirement 3: heavy blur + slight zoom so edges don't leak */
+.sauce-img { transition: filter 300ms ease, transform 300ms ease; }
+.sauce-img.is-blurred { filter: blur(28px); transform: scale(1.12); }
+.sauce-img.is-clear { filter: blur(0); transform: scale(1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sauce-img { transition: none; }
+}
