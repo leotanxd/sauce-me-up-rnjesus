@@ -22,6 +22,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # Make the existing backend importable without changing its layout.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -132,3 +133,17 @@ def sauce_batch(n: int = Query(default=3, ge=1, le=10)) -> dict:
     if not items:
         raise HTTPException(status_code=502, detail="Upstream returned no galleries.")
     return {"items": items, "errors": errors}
+
+
+# --- Single-service deployment (Render / Docker) -------------------------
+# If the frontend has been built (frontend/dist exists, as in the Docker
+# image), serve it from this same app so ONE service = ONE public URL.
+# The /api routes above are registered first and take precedence.
+# In local dev without a build, this is skipped and Vite serves the UI.
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _FRONTEND_DIST.is_dir():
+    app.mount(
+        "/",
+        StaticFiles(directory=_FRONTEND_DIST, html=True),
+        name="frontend",
+    )

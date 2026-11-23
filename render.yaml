@@ -1,0 +1,13 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# One free web service that builds from the Dockerfile and serves
+# both the API and the frontend at a single *.onrender.com URL.
+services:
+  - type: web
+    name: sauce-me-up-rnjesus
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # No environment variables or secrets are required.
+    # Free services spin down after ~15 min idle and take ~30-60s
+    # to wake on the next visit — that is expected on the free plan.

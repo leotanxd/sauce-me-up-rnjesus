@@ -1,0 +1,6 @@
+.git
+**/__pycache__
+frontend/node_modules
+frontend/dist
+archive
+*.muse-github-snapshot-sync.json
