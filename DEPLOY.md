@@ -21,6 +21,9 @@ Notes:
   waits ~30-60 s for it to wake. That's normal on the free plan.
 - Every push to `main` triggers a new deploy automatically.
 - A custom domain can be added later under the service's Settings.
+- The no-repeat memory, search-result pool, and caches are **per
+  process**: keep the service at one uvicorn worker / one instance, or
+  the "no repeats" window fragments across processes.
 
 ## Option B — the same Docker image anywhere else
 
@@ -35,6 +38,6 @@ Works on any Docker host (a VPS, Fly.io, Koyeb, Google Cloud Run, …).
 ## First live check
 
 Open the URL, then `https://<your-url>/api/health` should return
-`{"status":"ok"}`. If the feed shows demo placeholders instead of real
-results, the backend's upstream calls are failing from that host —
-check the service logs first.
+`{"status":"ok"}`. If the feed shows an error with a retry button, the
+backend's upstream calls are failing from that host — check the service
+logs first. (Demo placeholders exist only in development builds.)
