@@ -56,3 +56,23 @@ window.scrollTo = () => {}
 window.scrollBy = () => {}
 Element.prototype.scrollTo = () => {}
 Element.prototype.scrollBy = () => {}
+
+// jsdom has no PointerEvent: fireEvent would build a plain Event
+// and React's synthetic pointer events would carry no clientX /
+// pointerId / pointerType. This stub extends MouseEvent (so the
+// mouse fields work) and adds the pointer fields. setPointerCapture
+// stays absent — the swipe hook feature-detects it, as in browsers
+// that lack it.
+class PointerEventStub extends MouseEvent {
+  readonly pointerId: number
+  readonly pointerType: string
+  readonly isPrimary: boolean
+
+  constructor(type: string, init: PointerEventInit = {}) {
+    super(type, init)
+    this.pointerId = init.pointerId ?? 0
+    this.pointerType = init.pointerType ?? ""
+    this.isPrimary = init.isPrimary ?? false
+  }
+}
+globalThis.PointerEvent = PointerEventStub as typeof PointerEvent

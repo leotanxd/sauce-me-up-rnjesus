@@ -1,5 +1,6 @@
 import type { Sauce } from "../types"
 import { useGalleryPages } from "../hooks/useGalleryPages"
+import { useHorizontalSwipe } from "../hooks/useHorizontalSwipe"
 import PillButton, { PILL_BASE, PILL_LG } from "./ui/PillButton"
 
 type Props = {
@@ -15,8 +16,23 @@ type Props = {
  * All paging state lives in useGalleryPages; this is rendering only.
  */
 export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
-  const { cardRef, currentSrc, pageIdx, totalPages, goToPage, loadingPages } =
+  const { cardRef, isActive, currentSrc, pageIdx, totalPages, goToPage, loadingPages } =
     useGalleryPages(sauce)
+
+  const swipe = useHorizontalSwipe({
+    enabled: isActive,
+    onSwipe: (delta) => { void goToPage(delta) },
+  })
+
+  // A completed swipe's release-click is swallowed by the
+  // suppression flag; anything else is a plain tap → blur.
+  const onTapLayerClick = () => {
+    if (swipe.suppressClickRef.current) {
+      swipe.suppressClickRef.current = false
+      return
+    }
+    onToggleBlur()
+  }
 
   return (
     <article ref={cardRef} className="sauce-card relative flex items-center justify-center bg-black overflow-hidden">
@@ -90,12 +106,18 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
         </p>
       </footer>
 
-      {/* invisible tap-to-toggle layer (below the buttons) */}
+      {/* invisible tap-to-toggle layer (below the buttons); also the
+          horizontal-swipe surface — pan-y keeps vertical scrolling
+          native, horizontal drags page the gallery */}
       <button
         type="button"
         aria-label={blurred ? "Reveal image" : "Blur image"}
-        onClick={onToggleBlur}
-        className="absolute inset-0 z-[5] cursor-default"
+        onClick={onTapLayerClick}
+        onPointerDown={swipe.onPointerDown}
+        onPointerMove={swipe.onPointerMove}
+        onPointerUp={swipe.onPointerUp}
+        onPointerCancel={swipe.onPointerCancel}
+        className="sauce-swipe-layer absolute inset-0 z-[5] cursor-default"
       />
     </article>
   )

@@ -32,6 +32,12 @@ body {
   scroll-snap-stop: always;
 }
 
+/* Swipe layer (the card's tap-to-toggle button): the browser keeps
+   vertical scrolling native (pan-y) and streams horizontal movement
+   to the pointer handlers — so horizontal swipes page the gallery
+   without ever fighting the feed's vertical scroll-snap. */
+.sauce-card .sauce-swipe-layer { touch-action: pan-y; }
+
 /* Blur toggle — requirement 3: heavy blur + slight zoom so edges don't leak */
 .sauce-img { transition: filter 300ms ease, transform 300ms ease; }
 .sauce-img.is-blurred { filter: blur(28px); transform: scale(1.12); }
