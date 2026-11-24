@@ -22,8 +22,8 @@ export default function LoadingGirl({ label, small = false }: LoadingGirlProps) 
         aria-hidden
         className={
           small
-            ? "w-28 rounded-xl shadow-lg shadow-black/60"
-            : "w-44 rounded-2xl shadow-lg shadow-black/60"
+            ? "w-[21rem] max-w-[80vw] rounded-xl shadow-lg shadow-black/60"
+            : "w-[33rem] max-w-[92vw] rounded-2xl shadow-lg shadow-black/60"
         }
       />
       <p className="text-xs text-neutral-400 animate-pulse">{label}</p>
