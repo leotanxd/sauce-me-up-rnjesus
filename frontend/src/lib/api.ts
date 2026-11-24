@@ -1,46 +1,50 @@
-import type { Sauce } from "../types"
+import type { FeedMode, Sauce } from "../types"
+import { BATCH_SIZE, FETCH_TIMEOUT_MS } from "./config"
+
+/** An API failure with its HTTP status preserved as data, so callers
+ * can distinguish "not found" from "upstream down" without parsing
+ * message strings. Message format is unchanged ("API 404"). */
+export class ApiError extends Error {
+  readonly status: number
+  readonly path: string
+  constructor(status: number, path: string) {
+    super(`API ${status}`)
+    this.name = "ApiError"
+    this.status = status
+    this.path = path
+  }
+}
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "" // "" = Vite dev proxy
 
-/** Sauces per fetch. Single source of truth for the frontend; the
- * backend's /api/sauce/batch default mirrors this value. */
-export const BATCH_SIZE = 3
+type QueryParams = Record<string, string | number | boolean | undefined>
 
-/** No fetch may hang forever: if the backend doesn't answer in 30s,
- * the request aborts and the feed shows its error/retry state. */
-const FETCH_TIMEOUT_MS = 30_000
-
-function apiFetch(path: string): Promise<Response> {
-  return fetch(`${API_BASE}${path}`, {
+function apiFetch(path: string, params?: QueryParams): Promise<Response> {
+  const qs = new URLSearchParams()
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined) qs.set(key, String(value))
+  }
+  const query = qs.toString()
+  return fetch(`${API_BASE}${path}${query ? `?${query}` : ""}`, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   })
 }
 
 // Demo fallback so the feed is scrollable/testable with no backend
 // running — DEVELOPMENT BUILDS ONLY. In production a backend failure
-// must surface as an error, never as fake placeholder content.
+// must surface as an error, never as fake placeholder content. The
+// dynamic import keeps the demo data out of the production bundle.
 const DEMO_ENABLED = import.meta.env.DEV
 
-const DEMO: Sauce[] = Array.from({ length: 6 }, (_, i) => ({
-  id: 1000 + i,
-  title: `Demo item ${i + 1} — start the backend for real results`,
-  url: "#",
-  firstImageUrl: `https://picsum.photos/seed/sauce-demo-${i}/720/1280`,
-  pageCount: null,
-}))
-
-let demoIdx = 0
-
-function demoSauce(): Sauce {
-  const item = DEMO[demoIdx % DEMO.length]
-  demoIdx += 1
-  return item
+async function demoSauce() {
+  const { demoSauce: next } = await import("./demo")
+  return next()
 }
 
-export async function fetchNextSauce(popular = false): Promise<Sauce> {
+export async function fetchNextSauce(mode: FeedMode = "random"): Promise<Sauce> {
   try {
-    const res = await apiFetch(`/api/sauce/next${popular ? "?popular=true" : ""}`)
-    if (!res.ok) throw new Error(`API ${res.status}`)
+    const res = await apiFetch("/api/sauce/next", { mode })
+    if (!res.ok) throw new ApiError(res.status, "/api/sauce/next")
     return (await res.json()) as Sauce
   } catch (error) {
     if (DEMO_ENABLED) return demoSauce()
@@ -50,21 +54,23 @@ export async function fetchNextSauce(popular = false): Promise<Sauce> {
 
 /** All page image URLs for one gallery, in order (for arrow-key browsing). */
 export async function fetchSaucePages(id: number): Promise<string[]> {
-  const res = await apiFetch(`/api/sauce/${id}/pages`)
-  if (!res.ok) throw new Error(`API ${res.status}`)
+  const path = `/api/sauce/${id}/pages`
+  const res = await apiFetch(path)
+  if (!res.ok) throw new ApiError(res.status, path)
   const data = (await res.json()) as { images: string[] }
   return data.images
 }
 
-export async function fetchSauceBatch(n = BATCH_SIZE, popular = false): Promise<Sauce[]> {
+export async function fetchSauceBatch(n = BATCH_SIZE, mode: FeedMode = "random"): Promise<Sauce[]> {
   try {
-    const res = await apiFetch(`/api/sauce/batch?n=${n}${popular ? "&popular=true" : ""}`)
-    if (!res.ok) throw new Error(`API ${res.status}`)
+    const res = await apiFetch("/api/sauce/batch", { n, mode })
+    if (!res.ok) throw new ApiError(res.status, "/api/sauce/batch")
     const data = (await res.json()) as { items: Sauce[] }
     return data.items
   } catch (error) {
     if (DEMO_ENABLED) {
-      return Array.from({ length: n }, () => demoSauce())
+      const { demoSauce: next } = await import("./demo")
+      return Array.from({ length: n }, () => next())
     }
     throw error
   }

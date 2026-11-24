@@ -8,7 +8,7 @@ models (models.py) parsed once at the boundary.
 from cdn import MediaUrlBuilder
 from http_client import JsonHttpClient
 from models import GalleryDetail, GallerySummary
-from pools import SearchPool
+from pools import FeedMode, SearchPool
 
 GALLERY_DETAIL_URL_TEMPLATE = "https://nhentai.net/api/v2/galleries/{gallery_id}"
 PUBLIC_GALLERY_URL_TEMPLATE = "https://nhentai.net/g/{gallery_id}/"
@@ -28,16 +28,17 @@ class NhentaiClient:
         self._pool = pool if pool is not None else SearchPool(self._http)
 
     def get_random_english_gallery(
-        self, deadline: float | None = None, popular: bool = False
+        self, deadline: float | None = None, mode: FeedMode = FeedMode.RANDOM
     ) -> GallerySummary:
         """Return one English-language gallery from the result pool.
 
         The pool is refilled from a random search page only when it
         runs out, so most calls cost no network request at all. With
-        popular=True the pool draws from the API's popular-week sort
-        (currently very popular) instead of the whole catalogue.
+        mode=FeedMode.POPULAR the pool draws from the API's
+        popular-week sort (currently very popular) instead of the
+        whole catalogue.
         """
-        return self._pool.next(popular=popular, deadline=deadline)
+        return self._pool.next(mode=mode, deadline=deadline)
 
     def get_gallery_details(
         self, gallery_id: int, deadline: float | None = None

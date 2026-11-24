@@ -7,29 +7,31 @@ calls on demand when the user pages through a sauce.
 """
 
 from fastapi import APIRouter, Query
+from pools import FeedMode
 
 from ..picker import SaucePicker
+from ..schemas import BatchOut, PagesOut, SauceOut
 
 
 def create_sauce_router(picker: SaucePicker) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/api/sauce/next")
-    def sauce_next(popular: bool = Query(default=False)) -> dict:
-        # popular=true draws from the API's popular-week sort
-        # (currently very popular); the default is the whole-catalogue
-        # random feed.
-        return picker.next(popular=popular)
+    @router.get("/api/sauce/next", response_model=SauceOut)
+    def sauce_next(mode: FeedMode = Query(default=FeedMode.RANDOM)) -> SauceOut:
+        # ?mode=popular draws from the API's popular-week sort
+        # (currently very popular); the default ?mode=random is the
+        # whole-catalogue random feed.
+        return picker.next(mode=mode)
 
-    @router.get("/api/sauce/batch")
+    @router.get("/api/sauce/batch", response_model=BatchOut)
     def sauce_batch(
         n: int = Query(default=3, ge=1, le=10),
-        popular: bool = Query(default=False),
-    ) -> dict:
-        return picker.batch(n, popular=popular)
+        mode: FeedMode = Query(default=FeedMode.RANDOM),
+    ) -> BatchOut:
+        return picker.batch(n, mode=mode)
 
-    @router.get("/api/sauce/{gallery_id}/pages")
-    def sauce_pages(gallery_id: int) -> dict:
+    @router.get("/api/sauce/{gallery_id}/pages", response_model=PagesOut)
+    def sauce_pages(gallery_id: int) -> PagesOut:
         return picker.pages(gallery_id)
 
     return router

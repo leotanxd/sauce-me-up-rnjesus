@@ -20,8 +20,9 @@ Endpoints:
     GET /api/health          -> {"status": "ok"}
     GET /api/sauce/next      -> one random gallery, FIRST page image only
     GET /api/sauce/batch?n=3 -> n x /next (for pre-loading the feed)
-    Both accept ?popular=true to draw from the API's popular-week sort
-    (currently very popular) instead of the whole-catalogue random feed.
+    Both accept ?mode=popular to draw from the API's popular-week sort
+    (currently very popular) instead of the default whole-catalogue
+    random feed (?mode=random).
     GET /api/sauce/{id}/pages -> ALL page image URLs for one gallery,
                                  in order (explicit in-sauce browsing)
 """

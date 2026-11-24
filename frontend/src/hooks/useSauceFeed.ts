@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { Sauce } from "../types"
-import { BATCH_SIZE, fetchNextSauce, fetchSauceBatch } from "../lib/api"
+import type { FeedMode, Sauce } from "../types"
+import { BATCH_SIZE } from "../lib/config"
+import { fetchNextSauce, fetchSauceBatch } from "../lib/api"
 import { useIntersectionObserver } from "./useIntersectionObserver"
 
 /**
@@ -30,14 +31,14 @@ export function useSauceFeed() {
     loadingRef.current = true
     setLoadingMore(true)
     const gen = genRef.current
-    const pop = popularRef.current
+    const mode: FeedMode = popularRef.current ? "popular" : "random"
     try {
       // Never show the same sauce twice in one feed session. If a
       // whole batch comes back already-seen, retry a couple of times
       // instead of silently dead-ending the feed.
       let fresh: Sauce[] = []
       for (let attempt = 0; attempt < 3 && fresh.length === 0; attempt++) {
-        const more = n === 1 ? [await fetchNextSauce(pop)] : await fetchSauceBatch(n, pop)
+        const more = n === 1 ? [await fetchNextSauce(mode)] : await fetchSauceBatch(n, mode)
         fresh = more.filter((s) => !seenRef.current.has(s.id))
       }
       if (genRef.current !== gen) return // mode switched mid-load — discard

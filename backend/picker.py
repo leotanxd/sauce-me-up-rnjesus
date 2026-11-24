@@ -16,8 +16,10 @@ from fastapi import HTTPException
 
 from errors import ResourceNotFoundError
 from models import GalleryDetail
+from pools import FeedMode
 
 from .config import Settings
+from .schemas import BatchOut, PagesOut, SauceOut
 from .stores import DetailCache, RecentServedStore
 
 logger = logging.getLogger(__name__)
@@ -46,7 +48,9 @@ class SaucePicker:
         self._details.put(gallery_id, detail)
         return detail
 
-    def next(self, popular: bool = False, deadline: float | None = None) -> dict:
+    def next(
+        self, mode: FeedMode = FeedMode.RANDOM, deadline: float | None = None
+    ) -> SauceOut:
         # The search already filters language:english; still, verify
         # each pick against its detail tags and re-roll a non-English
         # result, so what the API returns — and the frontend displays —
@@ -62,7 +66,7 @@ class SaucePicker:
                     break
                 try:
                     gallery = self._client.get_random_english_gallery(
-                        deadline=deadline, popular=popular
+                        deadline=deadline, mode=mode
                     )
                     gallery_id = gallery.id
                 except Exception as error:  # upstream failure / bad payload
@@ -103,32 +107,32 @@ class SaucePicker:
                             first_image_url = None
 
                 self._recent.remember(gallery_id)
-                return {
-                    "id": gallery_id,
+                return SauceOut(
+                    id=gallery_id,
                     # Title priority lives on the models: search
                     # english_title, then detail title.english, then
                     # title.pretty (last resort), then "Untitled".
-                    "title": detail.display_title(gallery),
-                    "url": self._client.build_gallery_url(gallery),
+                    title=detail.display_title(gallery),
+                    url=self._client.build_gallery_url(gallery),
                     # ONLY the first retrieval item. No pages[] here.
-                    "firstImageUrl": first_image_url,
+                    first_image_url=first_image_url,
                     # Total page count comes free from the detail
                     # already fetched for verification — the feed
                     # shows "Page 1 of N" without page URLs ever
                     # leaving the /pages endpoint.
-                    "pageCount": detail.page_count,
-                }
+                    page_count=detail.page_count,
+                )
 
         raise HTTPException(
             status_code=502,
             detail="Could not find a new English-language gallery in time. Please retry.",
         )
 
-    def batch(self, n: int, popular: bool = False) -> dict:
+    def batch(self, n: int, mode: FeedMode = FeedMode.RANDOM) -> BatchOut:
         # One overall deadline for the batch: return what was
         # generated in time rather than hanging. (The default n at the
         # route mirrors the frontend's BATCH_SIZE in
-        # frontend/src/lib/api.ts — keep them in step.)
+        # frontend/src/lib/config.ts — keep them in step.)
         deadline = time.monotonic() + self._settings.batch_budget_seconds
         items, errors = [], 0
         for _ in range(n):
@@ -136,16 +140,16 @@ class SaucePicker:
                 errors += 1
                 break
             try:
-                items.append(self.next(deadline=deadline, popular=popular))
+                items.append(self.next(deadline=deadline, mode=mode))
             except HTTPException:
                 errors += 1
         if not items:
             raise HTTPException(
                 status_code=502, detail="Upstream returned no galleries."
             )
-        return {"items": items, "errors": errors}
+        return BatchOut(items=items, errors=errors)
 
-    def pages(self, gallery_id: int) -> dict:
+    def pages(self, gallery_id: int) -> PagesOut:
         """All page image URLs for one gallery, in page order.
 
         The feed itself only ever receives the first page (see next /
@@ -199,4 +203,4 @@ class SaucePicker:
             raise HTTPException(
                 status_code=502, detail="No page images available."
             )
-        return {"id": gallery_id, "count": len(urls), "images": urls}
+        return PagesOut(id=gallery_id, count=len(urls), images=urls)

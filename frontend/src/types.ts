@@ -1,3 +1,6 @@
+/** Feed modes, mirroring the backend's ?mode= values. */
+export type FeedMode = "random" | "popular"
+
 export type Sauce = {
   id: number
   title: string

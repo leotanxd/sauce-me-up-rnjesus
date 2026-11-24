@@ -6,13 +6,14 @@ pooled (shuffled), so one search call serves ~25 picks — roughly a
 drawn at random across the mode's whole result set, so picks are not
 limited to the first page.
 
-Modes: "random" (the whole English catalogue, newest-first pages) and
-"popular" (the API's popular-week sort — currently very popular).
-The pool owns its lock; callers never hold one.
+Modes: FeedMode.RANDOM (the whole English catalogue, newest-first
+pages) and FeedMode.POPULAR (the API's popular-week sort — currently
+very popular). The pool owns its lock; callers never hold one.
 """
 
 import random
 import threading
+from enum import StrEnum
 from urllib.parse import urlencode
 
 from http_client import JsonHttpClient
@@ -20,14 +21,24 @@ from models import GallerySummary
 
 SEARCH_URL = "https://nhentai.net/api/v2/search"
 
-MODES = ("random", "popular")
+
+class FeedMode(StrEnum):
+    """The feed modes. The value is the public API spelling (?mode=...)."""
+
+    RANDOM = "random"
+    POPULAR = "popular"
+
+    @property
+    def sort(self) -> str | None:
+        """Upstream search sort for this mode; None = default ordering."""
+        return "popular-week" if self is FeedMode.POPULAR else None
 
 
-def build_search_url(page: int = 1, mode: str = "random") -> str:
+def build_search_url(page: int = 1, mode: FeedMode = FeedMode.RANDOM) -> str:
     """Build the API search URL for English-language galleries."""
     params = {"query": "language:english", "page": page}
-    if mode == "popular":
-        params["sort"] = "popular-week"
+    if mode.sort is not None:
+        params["sort"] = mode.sort
     return f"{SEARCH_URL}?{urlencode(params)}"
 
 
@@ -36,11 +47,11 @@ class SearchPool:
 
     def __init__(self, http: JsonHttpClient):
         self._http = http
-        self._num_pages: dict = {mode: None for mode in MODES}
-        self._pool: dict = {mode: [] for mode in MODES}
+        self._num_pages: dict[FeedMode, int | None] = {m: None for m in FeedMode}
+        self._pool: dict[FeedMode, list] = {m: [] for m in FeedMode}
         self._lock = threading.Lock()
 
-    def _refill(self, mode: str, deadline: float | None = None) -> None:
+    def _refill(self, mode: FeedMode, deadline: float | None = None) -> None:
         """Fetch one random search page and pool ALL its results.
 
         Caller must hold self._lock (internal contract of this class).
@@ -79,10 +90,9 @@ class SearchPool:
         self._pool[mode] = pool
 
     def next(
-        self, popular: bool = False, deadline: float | None = None
+        self, mode: FeedMode = FeedMode.RANDOM, deadline: float | None = None
     ) -> GallerySummary:
         """Return one gallery from the mode's pool, refilling if empty."""
-        mode = "popular" if popular else "random"
         with self._lock:
             if not self._pool[mode]:
                 self._refill(mode, deadline=deadline)
