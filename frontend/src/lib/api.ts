@@ -37,9 +37,9 @@ function demoSauce(): Sauce {
   return item
 }
 
-export async function fetchNextSauce(): Promise<Sauce> {
+export async function fetchNextSauce(popular = false): Promise<Sauce> {
   try {
-    const res = await apiFetch(`/api/sauce/next`)
+    const res = await apiFetch(`/api/sauce/next${popular ? "?popular=true" : ""}`)
     if (!res.ok) throw new Error(`API ${res.status}`)
     return (await res.json()) as Sauce
   } catch (error) {
@@ -56,9 +56,9 @@ export async function fetchSaucePages(id: number): Promise<string[]> {
   return data.images
 }
 
-export async function fetchSauceBatch(n = BATCH_SIZE): Promise<Sauce[]> {
+export async function fetchSauceBatch(n = BATCH_SIZE, popular = false): Promise<Sauce[]> {
   try {
-    const res = await apiFetch(`/api/sauce/batch?n=${n}`)
+    const res = await apiFetch(`/api/sauce/batch?n=${n}${popular ? "&popular=true" : ""}`)
     if (!res.ok) throw new Error(`API ${res.status}`)
     const data = (await res.json()) as { items: Sauce[] }
     return data.items

@@ -48,14 +48,20 @@ class SauceGenerator:
         self.order_count = order_count
         self.browser = browser if browser is not None else webbrowser
         self._cdn_data: dict | None = None  # cached GET /api/v2/cdn response
-        self._search_num_pages: int | None = None  # learned from page 1
-        self._pool: list = []  # shuffled search results waiting to be served
+        # Two feed modes, each with its own result pool and learned page
+        # count: "random" (default — the whole catalogue, newest-first
+        # pages drawn at random) and "popular" (the API's popular-week
+        # sort — what is currently very popular).
+        self._search_num_pages: dict = {"random": None, "popular": None}
+        self._pool: dict = {"random": [], "popular": []}
         self._lock = threading.Lock()  # guards _pool and the lazy caches
 
-    def _build_search_url(self, page: int = 1) -> str:
+    def _build_search_url(self, page: int = 1, mode: str = "random") -> str:
         """Build the API search URL for English-language galleries."""
-        query = urlencode({"query": "language:english", "page": page})
-        return f"{SEARCH_URL}?{query}"
+        params = {"query": "language:english", "page": page}
+        if mode == "popular":
+            params["sort"] = "popular-week"
+        return f"{SEARCH_URL}?{urlencode(params)}"
 
     def _retry_delay(self, attempt: int) -> float:
         """Calculate exponential backoff with random jitter."""
@@ -170,28 +176,32 @@ class SauceGenerator:
 
         raise RuntimeError(f"Could not retrieve data after retries: {last_error}")
 
-    def _refill_pool(self, deadline: float | None = None) -> None:
+    def _refill_pool(self, mode: str = "random", deadline: float | None = None) -> None:
         """Fetch one random search page and pool ALL its results.
 
         Caller must hold self._lock. One search call yields ~25
         galleries, so pooling cuts search traffic roughly 25x versus
-        fetching a page per pick. Pages are random across the whole
-        English catalogue, so picks are not limited to the newest.
+        fetching a page per pick. Pages are random across the mode's
+        whole result set, so picks are not limited to the first page.
         """
-        if self._search_num_pages is None:
-            data = self._request_json(self._build_search_url(1), deadline=deadline)
+        if self._search_num_pages[mode] is None:
+            data = self._request_json(self._build_search_url(1, mode), deadline=deadline)
             num_pages = data.get("num_pages")
-            self._search_num_pages = (
+            self._search_num_pages[mode] = (
                 num_pages if isinstance(num_pages, int) and num_pages > 0 else 1
             )
             results = data.get("result", [])
         else:
-            page = random.randint(1, self._search_num_pages)
-            data = self._request_json(self._build_search_url(page), deadline=deadline)
+            page = random.randint(1, self._search_num_pages[mode])
+            data = self._request_json(
+                self._build_search_url(page, mode), deadline=deadline
+            )
             results = data.get("result", [])
             if not isinstance(results, list) or not results:
                 # Stale/empty page — fall back to page 1.
-                data = self._request_json(self._build_search_url(1), deadline=deadline)
+                data = self._request_json(
+                    self._build_search_url(1, mode), deadline=deadline
+                )
                 results = data.get("result", [])
 
         if not isinstance(results, list) or not results:
@@ -201,18 +211,23 @@ class SauceGenerator:
 
         pool = [g for g in results if isinstance(g, dict) and "id" in g]
         random.shuffle(pool)
-        self._pool = pool
+        self._pool[mode] = pool
 
-    def get_random_english_gallery(self, deadline: float | None = None) -> dict:
+    def get_random_english_gallery(
+        self, deadline: float | None = None, popular: bool = False
+    ) -> dict:
         """Return one English-language gallery from the result pool.
 
         The pool is refilled from a random search page only when it
-        runs out, so most calls cost no network request at all.
+        runs out, so most calls cost no network request at all. With
+        popular=True the pool draws from the API's popular-week sort
+        (currently very popular) instead of the whole catalogue.
         """
+        mode = "popular" if popular else "random"
         with self._lock:
-            if not self._pool:
-                self._refill_pool(deadline=deadline)
-            return self._pool.pop()
+            if not self._pool[mode]:
+                self._refill_pool(mode, deadline=deadline)
+            return self._pool[mode].pop()
 
     def get_gallery_details(
         self, gallery_id: int, deadline: float | None = None

@@ -8,6 +8,8 @@ Endpoints:
     GET /api/health          -> {"status": "ok"}
     GET /api/sauce/next      -> one random gallery, FIRST page image only
     GET /api/sauce/batch?n=3 -> n x /next (for pre-loading the feed)
+    Both accept ?popular=true to draw from the API's popular-week sort
+    (currently very popular) instead of the whole-catalogue random feed.
     GET /api/sauce/{id}/pages -> ALL page image URLs for one gallery,
                                  in order (explicit in-sauce browsing)
 
@@ -173,7 +175,7 @@ def _is_english(detail: dict) -> bool | None:
     return "english" in languages
 
 
-def _next_sauce(deadline: float | None = None) -> dict:
+def _next_sauce(deadline: float | None = None, popular: bool = False) -> dict:
     # The search already filters language:english; still, verify each pick
     # against its detail tags and re-roll a non-English result, so what the
     # API returns — and the frontend displays — is English sauce. Picks
@@ -189,7 +191,9 @@ def _next_sauce(deadline: float | None = None) -> dict:
             if time.monotonic() > deadline:
                 break
             try:
-                gallery = _generator.get_random_english_gallery(deadline=deadline)
+                gallery = _generator.get_random_english_gallery(
+                    deadline=deadline, popular=popular
+                )
                 gallery_id = int(gallery["id"])
             except Exception as error:  # upstream failure / bad payload
                 logger.warning("Pick failed: %s", error)
@@ -262,12 +266,17 @@ def health() -> dict:
 
 
 @app.get("/api/sauce/next")
-def sauce_next() -> dict:
-    return _next_sauce()
+def sauce_next(popular: bool = Query(default=False)) -> dict:
+    # popular=true draws from the API's popular-week sort (currently
+    # very popular); the default is the whole-catalogue random feed.
+    return _next_sauce(popular=popular)
 
 
 @app.get("/api/sauce/batch")
-def sauce_batch(n: int = Query(default=3, ge=1, le=10)) -> dict:
+def sauce_batch(
+    n: int = Query(default=3, ge=1, le=10),
+    popular: bool = Query(default=False),
+) -> dict:
     # One overall deadline for the batch: return what was generated in
     # time rather than hanging. (The default n mirrors the frontend's
     # BATCH_SIZE in frontend/src/lib/api.ts — keep them in step.)
@@ -278,7 +287,7 @@ def sauce_batch(n: int = Query(default=3, ge=1, le=10)) -> dict:
             errors += 1
             break
         try:
-            items.append(_next_sauce(deadline=deadline))
+            items.append(_next_sauce(deadline=deadline, popular=popular))
         except HTTPException:
             errors += 1
     if not items:
