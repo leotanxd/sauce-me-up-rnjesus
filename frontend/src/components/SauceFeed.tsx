@@ -4,7 +4,7 @@ import { fetchNextSauce, fetchSauceBatch } from "../lib/api"
 import SauceCard from "./SauceCard"
 
 const PREFETCH_AT = 2 // fetch more when this many cards remain below
-const BATCH_SIZE = 10 // sauces generated per load / top-up
+const BATCH_SIZE = 3 // sauces generated per load / top-up
 
 export default function SauceFeed() {
   const [items, setItems] = useState<Sauce[]>([])

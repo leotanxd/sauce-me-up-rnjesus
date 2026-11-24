@@ -25,7 +25,7 @@ export async function fetchNextSauce(): Promise<Sauce> {
   }
 }
 
-export async function fetchSauceBatch(n = 10): Promise<Sauce[]> {
+export async function fetchSauceBatch(n = 3): Promise<Sauce[]> {
   try {
     const res = await fetch(`${API_BASE}/api/sauce/batch?n=${n}`)
     if (!res.ok) throw new Error(`API ${res.status}`)
