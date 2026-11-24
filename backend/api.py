@@ -19,6 +19,7 @@ on demand when the user pages through a sauce with the arrow keys.
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 import time
@@ -33,7 +34,13 @@ from fastapi.staticfiles import StaticFiles
 # Make the existing backend importable without changing its layout.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from sauce_generator import SauceGenerator  # noqa: E402
+from sauce_generator import ResourceNotFoundError, SauceGenerator  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+# Client-facing failure text. Internal exception details go to the
+# server log, never into API responses.
+_UPSTREAM_502 = "Upstream request failed. Please retry."
 
 app = FastAPI(title="Sauce Me Up, RNJesus — API", version="0.1.0")
 
@@ -76,9 +83,14 @@ def _first_media_path(detail: dict, gallery: dict) -> str | None:
     if isinstance(pages, list) and pages:
         dict_pages = [p for p in pages if isinstance(p, dict)]
         if dict_pages:
+            # A page with no number sorts LAST, never before page 1.
             first = min(
                 dict_pages,
-                key=lambda p: p.get("number") if isinstance(p.get("number"), int) else 0,
+                key=lambda p: (
+                    p.get("number")
+                    if isinstance(p.get("number"), int)
+                    else float("inf")
+                ),
             )
             found = path_of(first)  # first page only — never the rest
             if found:
@@ -122,13 +134,13 @@ _detail_cache: dict = {}
 _detail_lock = threading.Lock()
 
 
-def _get_detail(gallery_id: int) -> dict:
+def _get_detail(gallery_id: int, deadline: float | None = None) -> dict:
     now = time.monotonic()
     with _detail_lock:
         hit = _detail_cache.get(gallery_id)
         if hit and now - hit[0] < _DETAIL_TTL_SECONDS:
             return hit[1]
-    raw_detail = _generator.get_gallery_details(gallery_id)
+    raw_detail = _generator.get_gallery_details(gallery_id, deadline=deadline)
     detail = _as_dict(raw_detail.get("result", raw_detail))
     with _detail_lock:
         if len(_detail_cache) >= _DETAIL_CACHE_MAX:
@@ -177,19 +189,26 @@ def _next_sauce(deadline: float | None = None) -> dict:
             if time.monotonic() > deadline:
                 break
             try:
-                gallery = _generator.get_random_english_gallery()
+                gallery = _generator.get_random_english_gallery(deadline=deadline)
                 gallery_id = int(gallery["id"])
             except Exception as error:  # upstream failure / bad payload
-                raise HTTPException(status_code=502, detail=str(error)) from error
+                logger.warning("Pick failed: %s", error)
+                raise HTTPException(status_code=502, detail=_UPSTREAM_502) from error
 
             if gallery_id in _recent_set:
                 continue  # already served recently — pick another gallery
 
             detail: dict = {}
             try:
-                detail = _get_detail(gallery_id)
+                detail = _get_detail(gallery_id, deadline=deadline)
             except Exception:
                 detail = {}  # details are optional; the search result may suffice
+            if not detail:
+                # Accepted on the search filter alone — visible in logs
+                # so silent degradation doesn't go unnoticed.
+                logger.warning(
+                    "Serving gallery %s without detail verification.", gallery_id
+                )
 
             if _is_english(detail) is False:
                 continue  # not English — pick another gallery
@@ -201,7 +220,9 @@ def _next_sauce(deadline: float | None = None) -> dict:
                     first_image_url = first_path
                 else:
                     try:
-                        first_image_url = _generator.build_media_url(first_path)
+                        first_image_url = _generator.build_media_url(
+                            first_path, deadline=deadline
+                        )
                     except Exception:
                         first_image_url = None
 
@@ -270,38 +291,63 @@ def sauce_pages(gallery_id: int) -> dict:
     the API v2 docs prescribe: a CDN image server + the page's path,
     used verbatim.
     """
+    deadline = time.monotonic() + _PICK_BUDGET_SECONDS
     try:
-        detail = _get_detail(gallery_id)
+        detail = _get_detail(gallery_id, deadline=deadline)
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Gallery not found.") from error
     except Exception as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
+        logger.warning("Detail fetch for %s failed: %s", gallery_id, error)
+        raise HTTPException(status_code=502, detail=_UPSTREAM_502) from error
 
     pages = detail.get("pages")
     urls: list[str] = []
     if isinstance(pages, list):
         dict_pages = [p for p in pages if isinstance(p, dict)]
+        # A page with no number sorts LAST, never before page 1.
         dict_pages.sort(
-            key=lambda p: p.get("number") if isinstance(p.get("number"), int) else 0
+            key=lambda p: (
+                p.get("number") if isinstance(p.get("number"), int) else float("inf")
+            )
         )
         for page in dict_pages:
             path = page.get("path")
             if not isinstance(path, str) or not path:
                 continue
             try:
-                urls.append(_generator.build_media_url(path))
-            except Exception:
-                continue
+                urls.append(_generator.build_media_url(path, deadline=deadline))
+            except Exception as error:
+                # All-or-nothing: a silently dropped middle page would
+                # shift every later "Page X of Y" label off the truth.
+                logger.warning(
+                    "Page URL build failed for gallery %s: %s", gallery_id, error
+                )
+                raise HTTPException(
+                    status_code=502, detail=_UPSTREAM_502
+                ) from error
 
     if not urls:
         # Fallback: at least the first page/cover, same as the feed gets.
         first_path = _first_media_path(detail, {})
         if first_path:
             try:
-                urls.append(_generator.build_media_url(first_path))
+                urls.append(_generator.build_media_url(first_path, deadline=deadline))
             except Exception:
                 pass
     if not urls:
         raise HTTPException(status_code=502, detail="No page images available.")
     return {"id": gallery_id, "count": len(urls), "images": urls}
+
+
+# Any /api/* path that matched no route above is a client bug — answer
+# with a JSON 404 instead of the SPA's index.html (which the static
+# mount below would otherwise serve with a misleading 200).
+@app.api_route(
+    "/api/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+)
+def api_not_found(path: str) -> dict:
+    raise HTTPException(status_code=404, detail="Not found.")
 
 
 # --- Single-service deployment (Render / Docker) -------------------------

@@ -46,21 +46,35 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
       setPages(list)
       return list
     } catch {
-      // Demo/offline items have no gallery behind them — first page only.
-      const list = sauce.firstImageUrl ? [sauce.firstImageUrl] : []
-      setPages(list)
-      return list
+      // Do NOT cache a failure (previously this stored a 1-page list
+      // and disabled paging for this card forever). Leaving pages null
+      // means the next arrow press retries the fetch.
+      return null
     } finally {
       loadingRef.current = false
       setLoadingPages(false)
     }
   }, [pages, sauce.id, sauce.firstImageUrl])
 
+  // Arrow presses that arrive while the page list is still loading are
+  // accumulated here and applied, clamped, once the list exists — so
+  // pressing → three times quickly lands three pages ahead, not one.
+  const pendingDeltaRef = useRef(0)
+
   const goToPage = useCallback(
     async (delta: number) => {
-      const list = pages ?? (await ensurePages())
-      if (!list || list.length < 2) return
-      setPageIdx((i) => Math.min(list.length - 1, Math.max(0, i + delta)))
+      if (pages) {
+        if (pages.length < 2) return
+        setPageIdx((i) => Math.min(pages.length - 1, Math.max(0, i + delta)))
+        return
+      }
+      pendingDeltaRef.current += delta
+      const list = await ensurePages()
+      if (!list) return // fetch in flight (its caller applies the total) or failed (next press retries)
+      const total = pendingDeltaRef.current
+      pendingDeltaRef.current = 0
+      if (list.length < 2 || total === 0) return
+      setPageIdx((i) => Math.min(list.length - 1, Math.max(0, i + total)))
     },
     [pages, ensurePages],
   )

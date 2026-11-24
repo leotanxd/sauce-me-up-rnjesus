@@ -18,11 +18,17 @@ export default function SauceFeed() {
     loadingRef.current = true
     setLoadingMore(true)
     try {
-      const more = n === 1 ? [await fetchNextSauce()] : await fetchSauceBatch(n)
-      // Never show the same sauce twice in one feed session.
-      const fresh = more.filter((s) => !seenRef.current.has(s.id))
+      // Never show the same sauce twice in one feed session. If a
+      // whole batch comes back already-seen, retry a couple of times
+      // instead of silently dead-ending the feed.
+      let fresh: Sauce[] = []
+      for (let attempt = 0; attempt < 3 && fresh.length === 0; attempt++) {
+        const more = n === 1 ? [await fetchNextSauce()] : await fetchSauceBatch(n)
+        fresh = more.filter((s) => !seenRef.current.has(s.id))
+      }
       fresh.forEach((s) => seenRef.current.add(s.id))
-      setItems((prev) => [...prev, ...fresh])
+      if (fresh.length) setItems((prev) => [...prev, ...fresh])
+      setError(null) // a successful load clears any earlier failure notice
     } catch (e) {
       setError("Could not load sauce. Check your connection and try again.")
     } finally {
@@ -98,6 +104,23 @@ export default function SauceFeed() {
       {loadingMore && (
         <div className="fixed inset-0 z-20 flex items-center justify-center pointer-events-none">
           <LoadingGirl small label="Generating more sauce…" />
+        </div>
+      )}
+
+      {/* top-up failure notice — without this, a failed load mid-feed
+          was invisible (the error only rendered on the empty screen) */}
+      {error && !loadingMore && (
+        <div className="fixed bottom-3 inset-x-0 z-20 flex justify-center">
+          <div className="flex items-center gap-3 rounded-full bg-white/10 backdrop-blur px-4 py-2 border border-white/20">
+            <p className="text-xs text-white">{error}</p>
+            <button
+              type="button"
+              onClick={() => { setError(null); void loadMore(BATCH_SIZE) }}
+              className="text-xs font-medium text-white underline underline-offset-2"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       )}
 

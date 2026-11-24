@@ -9,10 +9,17 @@ This version uses keyless API access:
 """
 
 import json
+import logging
 import random
 import threading
 import time
 import webbrowser
+
+logger = logging.getLogger(__name__)
+
+
+class ResourceNotFoundError(RuntimeError):
+    """The upstream API returned 404 for the requested resource."""
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -56,11 +63,43 @@ class SauceGenerator:
         jitter = random.uniform(0, MAX_JITTER_SECONDS)
         return base_delay + jitter
 
-    def _request_json(self, url: str) -> dict:
-        """Request JSON data without authentication, with retries."""
+    def _request_json(self, url: str, deadline: float | None = None) -> dict:
+        """Request JSON data without authentication, with retries.
+
+        ``deadline`` (a time.monotonic() timestamp) hard-caps the whole
+        operation: each attempt's timeout shrinks to the remaining
+        budget, and a backoff sleep that would overrun the deadline is
+        skipped in favour of failing fast.
+        """
         last_error = None
 
+        def remaining() -> float | None:
+            return None if deadline is None else deadline - time.monotonic()
+
+        def sleep_before_retry(attempt: int, error: HTTPError | None) -> None:
+            delay = self._retry_delay(attempt)
+            # Honour the upstream's Retry-After as a floor for the delay.
+            if error is not None and error.headers is not None:
+                retry_after = error.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        delay = max(delay, float(retry_after))
+                    except ValueError:
+                        pass
+            left = remaining()
+            if left is not None and time.monotonic() + delay > deadline:
+                raise RuntimeError("Upstream request deadline exceeded.")
+            time.sleep(delay)
+
         for attempt in range(1, MAX_RETRIES + 1):
+            left = remaining()
+            if left is not None and left <= 0:
+                raise RuntimeError("Upstream request deadline exceeded.")
+            timeout = (
+                REQUEST_TIMEOUT_SECONDS
+                if left is None
+                else min(REQUEST_TIMEOUT_SECONDS, left)
+            )
             request = Request(
                 url,
                 headers={
@@ -70,23 +109,19 @@ class SauceGenerator:
             )
 
             try:
-                with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-                    if response.status != 200:
-                        raise RuntimeError(
-                            f"API returned HTTP {response.status}: {url}"
-                        )
-
+                with urlopen(request, timeout=timeout) as response:
+                    # Non-200 statuses raise HTTPError via urlopen, so a
+                    # response here is a success.
                     return json.loads(response.read().decode("utf-8"))
 
             except HTTPError as error:
                 status_code = error.code
+                last_error = error
 
-                if status_code == 429 and attempt < MAX_RETRIES:
-                    delay = self._retry_delay(attempt)
-                    print(f"Rate limited. Retrying in {delay:.1f} seconds...")
-                    time.sleep(delay)
-                    last_error = error
-                    continue
+                if status_code == 404:
+                    raise ResourceNotFoundError(
+                        "The requested API resource could not be found."
+                    ) from error
 
                 if status_code == 401:
                     raise RuntimeError(
@@ -100,33 +135,28 @@ class SauceGenerator:
                         "restricted or unavailable to this client."
                     ) from error
 
-                if status_code == 404:
-                    raise RuntimeError(
-                        "The requested API resource could not be found."
-                    ) from error
-
-                if 500 <= status_code < 600:
-                    if attempt < MAX_RETRIES:
-                        delay = self._retry_delay(attempt)
-                        print(
-                            f"API server error {status_code}. "
-                            f"Retrying in {delay:.1f} seconds..."
-                        )
-                        time.sleep(delay)
-                        last_error = error
-                        continue
+                if (status_code == 429 or 500 <= status_code < 600) and (
+                    attempt < MAX_RETRIES
+                ):
+                    logger.warning(
+                        "Upstream HTTP %s on attempt %s; retrying.",
+                        status_code,
+                        attempt,
+                    )
+                    error.close()
+                    sleep_before_retry(attempt, error)
+                    continue
 
                 raise RuntimeError(
                     f"Could not retrieve data from the API: HTTP {status_code}"
                 ) from error
 
-            except (URLError, TimeoutError) as error:
+            except (URLError, TimeoutError, ConnectionError) as error:
                 last_error = error
 
                 if attempt < MAX_RETRIES:
-                    delay = self._retry_delay(attempt)
-                    print(f"Network issue. Retrying in {delay:.1f} seconds...")
-                    time.sleep(delay)
+                    logger.warning("Network issue on attempt %s; retrying.", attempt)
+                    sleep_before_retry(attempt, None)
                     continue
 
                 raise RuntimeError(
@@ -140,7 +170,7 @@ class SauceGenerator:
 
         raise RuntimeError(f"Could not retrieve data after retries: {last_error}")
 
-    def _refill_pool(self) -> None:
+    def _refill_pool(self, deadline: float | None = None) -> None:
         """Fetch one random search page and pool ALL its results.
 
         Caller must hold self._lock. One search call yields ~25
@@ -149,7 +179,7 @@ class SauceGenerator:
         English catalogue, so picks are not limited to the newest.
         """
         if self._search_num_pages is None:
-            data = self._request_json(self._build_search_url(1))
+            data = self._request_json(self._build_search_url(1), deadline=deadline)
             num_pages = data.get("num_pages")
             self._search_num_pages = (
                 num_pages if isinstance(num_pages, int) and num_pages > 0 else 1
@@ -157,11 +187,11 @@ class SauceGenerator:
             results = data.get("result", [])
         else:
             page = random.randint(1, self._search_num_pages)
-            data = self._request_json(self._build_search_url(page))
+            data = self._request_json(self._build_search_url(page), deadline=deadline)
             results = data.get("result", [])
             if not isinstance(results, list) or not results:
                 # Stale/empty page — fall back to page 1.
-                data = self._request_json(self._build_search_url(1))
+                data = self._request_json(self._build_search_url(1), deadline=deadline)
                 results = data.get("result", [])
 
         if not isinstance(results, list) or not results:
@@ -173,7 +203,7 @@ class SauceGenerator:
         random.shuffle(pool)
         self._pool = pool
 
-    def get_random_english_gallery(self) -> dict:
+    def get_random_english_gallery(self, deadline: float | None = None) -> dict:
         """Return one English-language gallery from the result pool.
 
         The pool is refilled from a random search page only when it
@@ -181,13 +211,15 @@ class SauceGenerator:
         """
         with self._lock:
             if not self._pool:
-                self._refill_pool()
+                self._refill_pool(deadline=deadline)
             return self._pool.pop()
 
-    def get_gallery_details(self, gallery_id: int) -> dict:
+    def get_gallery_details(
+        self, gallery_id: int, deadline: float | None = None
+    ) -> dict:
         """Optionally retrieve more information about a selected gallery."""
         detail_url = GALLERY_DETAIL_URL_TEMPLATE.format(gallery_id=gallery_id)
-        return self._request_json(detail_url)
+        return self._request_json(detail_url, deadline=deadline)
 
     def build_gallery_url(self, gallery: dict) -> str:
         """Create the public nhentai website link for a gallery."""
@@ -200,7 +232,9 @@ class SauceGenerator:
 
         return PUBLIC_GALLERY_URL_TEMPLATE.format(gallery_id=gallery_id)
 
-    def build_media_url(self, relative_media_path: str) -> str:
+    def build_media_url(
+        self, relative_media_path: str, deadline: float | None = None
+    ) -> str:
         """Build an image URL using an API-provided CDN server and path.
 
         Per the API v2 docs (GET /api/v2/cdn), the CDN config returns
@@ -214,7 +248,7 @@ class SauceGenerator:
 
         with self._lock:
             if self._cdn_data is None:
-                self._cdn_data = self._request_json(CDN_URL)
+                self._cdn_data = self._request_json(CDN_URL, deadline=deadline)
             cdn_data = self._cdn_data
 
         filename = relative_media_path.rsplit("/", 1)[-1]
