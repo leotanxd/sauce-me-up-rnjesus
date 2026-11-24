@@ -25,6 +25,14 @@ export async function fetchNextSauce(): Promise<Sauce> {
   }
 }
 
+/** All page image URLs for one gallery, in order (for arrow-key browsing). */
+export async function fetchSaucePages(id: number): Promise<string[]> {
+  const res = await fetch(`${API_BASE}/api/sauce/${id}/pages`)
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const data = (await res.json()) as { images: string[] }
+  return data.images
+}
+
 export async function fetchSauceBatch(n = 3): Promise<Sauce[]> {
   try {
     const res = await fetch(`${API_BASE}/api/sauce/batch?n=${n}`)

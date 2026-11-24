@@ -8,10 +8,13 @@ Endpoints:
     GET /api/health          -> {"status": "ok"}
     GET /api/sauce/next      -> one random gallery, FIRST page image only
     GET /api/sauce/batch?n=3 -> n x /next (for pre-loading the feed)
+    GET /api/sauce/{id}/pages -> ALL page image URLs for one gallery,
+                                 in order (explicit in-sauce browsing)
 
-Design rule (from the frontend spec): only the first retrieval item is
-ever sent to the client — the first page/cover image of one gallery.
-No other pages, and no full gallery payload, leave this API.
+Design rule (from the frontend spec): the FEED only ever receives the
+first retrieval item — the first page image of each gallery. The full
+page list is available only through /pages, which the frontend calls
+on demand when the user pages through a sauce with the arrow keys.
 """
 
 from __future__ import annotations
@@ -211,6 +214,52 @@ def sauce_batch(n: int = Query(default=3, ge=1, le=10)) -> dict:
     if not items:
         raise HTTPException(status_code=502, detail="Upstream returned no galleries.")
     return {"items": items, "errors": errors}
+
+
+@app.get("/api/sauce/{gallery_id}/pages")
+def sauce_pages(gallery_id: int) -> dict:
+    """All page image URLs for one gallery, in page order.
+
+    The feed itself only ever receives the first page (see /next and
+    /batch). This endpoint exists for explicit in-sauce browsing: the
+    frontend calls it only when the user starts paging through a sauce
+    with the arrow keys / on-screen arrows. URLs are built exactly as
+    the API v2 docs prescribe: a CDN image server + the page's path,
+    used verbatim.
+    """
+    try:
+        raw_detail = _generator.get_gallery_details(gallery_id)
+        detail = _as_dict(raw_detail.get("result", raw_detail))
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    pages = detail.get("pages")
+    urls: list[str] = []
+    if isinstance(pages, list):
+        dict_pages = [p for p in pages if isinstance(p, dict)]
+        dict_pages.sort(
+            key=lambda p: p.get("number") if isinstance(p.get("number"), int) else 0
+        )
+        for page in dict_pages:
+            path = page.get("path")
+            if not isinstance(path, str) or not path:
+                continue
+            try:
+                urls.append(_generator.build_media_url(path))
+            except Exception:
+                continue
+
+    if not urls:
+        # Fallback: at least the first page/cover, same as the feed gets.
+        first_path = _first_media_path(detail, {})
+        if first_path:
+            try:
+                urls.append(_generator.build_media_url(first_path))
+            except Exception:
+                pass
+    if not urls:
+        raise HTTPException(status_code=502, detail="No page images available.")
+    return {"id": gallery_id, "count": len(urls), "images": urls}
 
 
 # --- Single-service deployment (Render / Docker) -------------------------
