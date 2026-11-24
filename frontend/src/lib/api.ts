@@ -26,6 +26,7 @@ const DEMO: Sauce[] = Array.from({ length: 6 }, (_, i) => ({
   title: `Demo item ${i + 1} — start the backend for real results`,
   url: "#",
   firstImageUrl: `https://picsum.photos/seed/sauce-demo-${i}/720/1280`,
+  pageCount: null,
 }))
 
 let demoIdx = 0

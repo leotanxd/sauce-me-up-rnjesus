@@ -101,7 +101,10 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
   }, [pages, pageIdx])
 
   const currentSrc = pages?.[pageIdx] ?? sauce.firstImageUrl
-  const pageCount = pages?.length
+  // Total pages: the fetched list once we have it, otherwise the count
+  // the backend verified when it served this sauce — so the caption
+  // can always show "Page X of Y", even before any paging happens.
+  const totalPages = pages?.length ?? sauce.pageCount ?? undefined
 
   return (
     <article ref={cardRef} className="sauce-card relative flex items-center justify-center bg-black overflow-hidden">
@@ -156,7 +159,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
           <button
             type="button"
             onClick={() => void goToPage(1)}
-            disabled={pageCount !== undefined && pageIdx >= pageCount - 1}
+            disabled={totalPages !== undefined && pageIdx >= totalPages - 1}
             aria-label="Next page"
             className="rounded-full bg-white/10 backdrop-blur px-3 py-2 text-sm font-medium text-white border border-white/20 active:scale-95 disabled:opacity-40"
           >
@@ -171,8 +174,8 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
         <p className="text-xs text-neutral-400 mt-1">
           {loadingPages
             ? "Loading pages…"
-            : pageCount !== undefined
-              ? `Page ${pageIdx + 1} of ${pageCount} · ← → to browse this sauce`
+            : totalPages !== undefined
+              ? `Page ${pageIdx + 1} of ${totalPages} · ← → to browse this sauce`
               : "← → to browse this sauce's pages"}
           {blurred ? " · Blurred — tap Reveal to show" : ""}
         </p>

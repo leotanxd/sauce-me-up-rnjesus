@@ -230,6 +230,11 @@ def _next_sauce(deadline: float | None = None) -> dict:
             # the detail's title.english. title.pretty is often the
             # Japanese title even for English galleries — last resort only.
             title_obj = _as_dict(detail.get("title"))
+            # Total page count comes free from the detail already
+            # fetched for verification — the feed shows "Page 1 of N"
+            # without the page URLs themselves ever leaving /pages.
+            detail_pages = detail.get("pages")
+            page_count = len(detail_pages) if isinstance(detail_pages, list) else None
             _remember_served(gallery_id)
             return {
                 "id": gallery_id,
@@ -242,6 +247,7 @@ def _next_sauce(deadline: float | None = None) -> dict:
                 "url": _generator.build_gallery_url(gallery),
                 # ONLY the first retrieval item. Do not add pages[] here.
                 "firstImageUrl": first_image_url,
+                "pageCount": page_count,
             }
 
     raise HTTPException(

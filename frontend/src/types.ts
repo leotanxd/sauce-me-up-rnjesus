@@ -7,4 +7,7 @@ export type Sauce = {
    * of the gallery; full page lists are fetched separately, on demand,
    * via GET /api/sauce/{id}/pages when the user pages through a sauce. */
   firstImageUrl: string | null
+  /** Total number of pages in the gallery, when the backend could
+   * verify it (null = unknown until the page list is fetched). */
+  pageCount: number | null
 }
