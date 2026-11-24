@@ -76,3 +76,22 @@ class PointerEventStub extends MouseEvent {
   }
 }
 globalThis.PointerEvent = PointerEventStub as typeof PointerEvent
+
+// jsdom has no matchMedia. The stub defaults to "not small"
+// (desktop) so existing tests are unaffected; component tests flip
+// it with setSmallScreen() BEFORE rendering.
+let smallScreen = false
+export function setSmallScreen(value: boolean): void {
+  smallScreen = value
+}
+window.matchMedia = (query: string): MediaQueryList =>
+  ({
+    matches: query.includes("max-width") ? smallScreen : false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }) as MediaQueryList

@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react"
 import type { Sauce } from "../types"
 import { useGalleryPages } from "../hooks/useGalleryPages"
 import { useHorizontalSwipe } from "../hooks/useHorizontalSwipe"
+import { useIsSmallScreen } from "../hooks/useIsSmallScreen"
 import PillButton, { PILL_BASE, PILL_LG } from "./ui/PillButton"
 
 type Props = {
@@ -11,28 +13,64 @@ type Props = {
 
 /**
  * One full-screen feed card. Shows the sauce's first page; when this
- * card is the one on screen, the user can page through the REST of the
- * gallery with the ← / → arrow keys (or the on-screen ‹ › buttons).
- * All paging state lives in useGalleryPages; this is rendering only.
+ * card is the one on screen, the user can page through the REST of
+ * the gallery with the ← / → arrow keys, the on-screen ‹ › buttons,
+ * or a horizontal swipe on the image. All paging state lives in
+ * useGalleryPages; this is rendering plus gesture/title wiring.
+ *
+ * On small screens a long title condenses to its first 4 words as a
+ * button that expands the full title in a narrow panel; on desktop
+ * the title is the plain full-text paragraph it has always been.
  */
 export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
   const { cardRef, isActive, currentSrc, pageIdx, totalPages, goToPage, loadingPages } =
     useGalleryPages(sauce)
+  const smallScreen = useIsSmallScreen()
+  const [titleExpanded, setTitleExpanded] = useState(false)
+
+  // Any page turn collapses an expanded title. Buttons and swipe go
+  // through `page` below; keyboard paging happens inside
+  // useGalleryPages and bypasses it, so cover it via pageIdx.
+  useEffect(() => {
+    setTitleExpanded(false)
+  }, [pageIdx])
+  // Scrolling away collapses too (unmount destroys the state anyway,
+  // so a card always comes back collapsed).
+  useEffect(() => {
+    if (!isActive) setTitleExpanded(false)
+  }, [isActive])
+
+  const page = (delta: number) => {
+    setTitleExpanded(false)
+    void goToPage(delta)
+  }
 
   const swipe = useHorizontalSwipe({
     enabled: isActive,
-    onSwipe: (delta) => { void goToPage(delta) },
+    onSwipe: (delta) => page(delta),
   })
 
-  // A completed swipe's release-click is swallowed by the
-  // suppression flag; anything else is a plain tap → blur.
+  // Tap-layer click order matters: an expanded title consumes the
+  // tap as a dismiss; a completed swipe's release-click is swallowed
+  // by the suppression flag; anything else is a plain tap → blur.
   const onTapLayerClick = () => {
+    if (titleExpanded) {
+      setTitleExpanded(false)
+      return
+    }
     if (swipe.suppressClickRef.current) {
       swipe.suppressClickRef.current = false
       return
     }
     onToggleBlur()
   }
+
+
+  // Condensed title (small screens only): more than 4 words → first
+  // 4 + " …" as an expand button; ≤ 4 words renders in full, as text.
+  const words = sauce.title.trim().split(/\s+/)
+  const condensable = smallScreen && words.length > 4
+  const condensedTitle = `${words.slice(0, 4).join(" ")} …`
 
   return (
     <article ref={cardRef} className="sauce-card relative flex items-center justify-center bg-black overflow-hidden">
@@ -75,7 +113,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
         </a>
         <div className="flex items-center gap-2">
           <PillButton
-            onClick={() => void goToPage(-1)}
+            onClick={() => page(-1)}
             disabled={pageIdx === 0}
             aria-label="Previous page"
             className="backdrop-blur flex h-16 w-16 items-center justify-center text-4xl font-medium active:scale-95 disabled:opacity-40"
@@ -83,7 +121,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
             ‹
           </PillButton>
           <PillButton
-            onClick={() => void goToPage(1)}
+            onClick={() => page(1)}
             disabled={totalPages !== undefined && pageIdx >= totalPages - 1}
             aria-label="Next page"
             className="backdrop-blur flex h-16 w-16 items-center justify-center text-4xl font-medium active:scale-95 disabled:opacity-40"
@@ -95,7 +133,28 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
 
       {/* caption */}
       <footer className="absolute bottom-0 inset-x-0 z-10 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black/80 to-transparent">
-        <p className="text-base font-medium leading-snug pr-20">{sauce.title}</p>
+        {condensable && titleExpanded ? (
+          <button
+            type="button"
+            aria-expanded={true}
+            aria-label="Collapse title"
+            onClick={() => setTitleExpanded(false)}
+            className="mb-2 block max-w-44 max-h-[55dvh] overflow-y-auto rounded-xl border border-white/15 bg-black/85 backdrop-blur p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          >
+            <span className="text-base font-medium leading-snug break-words">{sauce.title}</span>
+          </button>
+        ) : condensable ? (
+          <button
+            type="button"
+            aria-expanded={false}
+            onClick={() => setTitleExpanded(true)}
+            className="block text-left text-base font-medium leading-snug pr-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          >
+            {condensedTitle}
+          </button>
+        ) : (
+          <p className="text-base font-medium leading-snug pr-20">{sauce.title}</p>
+        )}
         <p className="text-xs text-neutral-400 mt-1">
           {loadingPages
             ? "Loading pages…"
