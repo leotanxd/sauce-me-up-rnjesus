@@ -1,6 +1,6 @@
 # Frontend — Sauce Me Up, RNJesus
 
-Dark, TikTok-like vertical feed for `src/sauce_generator.py`, scaffolded
+Dark, TikTok-like vertical feed for the backend in `../backend/`, scaffolded
 from the **Film Camera App Scroll Landing Page** template (Shutter Roll)
 by Kedhareswer Naidu — MIT, via 21st.dev:
 https://21st.dev/@kedhareswer/templates/film-camera-app-scroll-landing-page
@@ -44,12 +44,18 @@ real error with a retry button instead.
 
 ## Layout
 
-- `src/components/SauceFeed.tsx` — snap container, infinite loading, keys
+- `src/components/SauceFeed.tsx` — layout only: snap container and
+  overlays, over the `useSauceFeed` state machine
 - `src/components/SauceCard.tsx` — one full-screen item + blur toggle +
-  ← / → paging through the gallery's pages (fetched lazily per card)
-- `src/components/LoadingGirl.tsx` — loading animation (video chunk is
-  loaded lazily; a poster frame shows instantly)
+  ← / → paging buttons, over the `useGalleryPages` hook
+- `src/hooks/useSauceFeed.ts` — feed state: batch loading, dedupe,
+  Random | Popular switching (generation-guarded), infinite scroll, keys
+- `src/hooks/useGalleryPages.ts` — per-card paging: lazy page fetch,
+  pending-delta arrow handling, next-page preload
+- `src/hooks/useIntersectionObserver.ts` — the shared observer lifecycle
+- `src/components/LoadingGirl.tsx` — loading animation (static mp4 in
+  `public/`; a poster frame shows instantly)
 - `src/lib/api.ts` — `GET /api/sauce/next`, `/api/sauce/batch?n=`, and
   `/api/sauce/{id}/pages`; `BATCH_SIZE` lives here
-- `../backend/api.py` — FastAPI wrapper around `SauceGenerator`; feed
+- `../backend/` — FastAPI app (`api.py` is the composition root); feed
   endpoints send the first page only, `/pages` sends the rest on demand

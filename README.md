@@ -15,10 +15,12 @@ it's working.)
 
 ## What is this?
 
-The backend (`src/sauce_generator.py`) draws random English-language
+The backend (the client modules in `src/` — transport, search pools,
+typed models, CDN URLs) draws random English-language
 galleries from a catalogue of 100k+ through the nhentai API v2, picking
 from random result pages so you don't just see the newest uploads.
-A small FastAPI wrapper (`backend/api.py`) serves each gallery's first
+A FastAPI app (`backend/` — `api.py` wires together config, stores, the
+picker service, and the routers) serves each gallery's first
 page to a dark, scroll-snapping React frontend (`frontend/`). Sauces
 are generated in batches of 3, the last 300 served are remembered so
 nothing repeats, and every image starts blurred until you reveal it.
