@@ -19,6 +19,7 @@ export function useSauceFeed() {
   const [popular, setPopular] = useState(false) // feed mode: random vs popular
   const [error, setError] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false) // top-up in progress
+  const [activeIndex, setActiveIndex] = useState(0) // card in the viewport
   const loadingRef = useRef(false)
   const seenRef = useRef<Set<number>>(new Set()) // IDs already in the feed
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -68,6 +69,7 @@ export function useSauceFeed() {
       genRef.current += 1 // invalidate any in-flight load
       seenRef.current.clear()
       setItems([])
+      setActiveIndex(0)
       setError(null)
       loadingRef.current = false
       feedRef.current?.scrollTo({ top: 0 })
@@ -80,6 +82,19 @@ export function useSauceFeed() {
     setError(null)
     void loadMore(BATCH_SIZE)
   }, [loadMore])
+
+  // Feed windowing: SauceFeed mounts only the cards within ±2 of the
+  // active index (placeholders keep the scroll geometry identical).
+  // With mandatory snap and exactly-100dvh cards, scrollTop at rest
+  // is a multiple of the card height, so this index is exact — and it
+  // updates continuously during scrolling, which is when mounting
+  // needs to happen.
+  const onFeedScroll = useCallback(() => {
+    const el = feedRef.current
+    if (!el || el.clientHeight <= 0) return
+    const i = Math.round(el.scrollTop / el.clientHeight)
+    setActiveIndex((current) => (current === i ? current : i))
+  }, [])
 
   const toggleBlur = useCallback(() => setBlurred((b) => !b), [])
 
@@ -117,6 +132,8 @@ export function useSauceFeed() {
     error,
     loadingMore,
     retry,
+    activeIndex,
+    onFeedScroll,
     sentinelRef,
     feedRef,
   }

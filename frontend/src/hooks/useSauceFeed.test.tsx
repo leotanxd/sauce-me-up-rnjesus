@@ -104,6 +104,31 @@ describe("useSauceFeed", () => {
     expect(hook.items.map((s) => s.id)).toEqual([7, 8])
   })
 
+  it("derives the active index from scroll position for windowing", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+
+    const el = hook.feedRef.current
+    if (!el) throw new Error("feed element not mounted")
+    Object.defineProperty(el, "clientHeight", {
+      value: 800,
+      configurable: true,
+    })
+
+    el.scrollTop = 1600 // third card at rest (snap multiples)
+    act(() => hook.onFeedScroll())
+    expect(hook.activeIndex).toBe(2)
+
+    el.scrollTop = 1700 // mid-scroll: still rounds to the nearest card
+    act(() => hook.onFeedScroll())
+    expect(hook.activeIndex).toBe(2)
+
+    el.scrollTop = 0
+    act(() => hook.onFeedScroll())
+    expect(hook.activeIndex).toBe(0)
+  })
+
   it("sets an error on failure and retry() recovers", async () => {
     mockBatch.mockRejectedValueOnce(new Error("backend down"))
     render(<Harness />)

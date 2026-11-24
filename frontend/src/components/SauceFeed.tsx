@@ -20,6 +20,8 @@ export default function SauceFeed() {
     error,
     loadingMore,
     retry,
+    activeIndex,
+    onFeedScroll,
     sentinelRef,
     feedRef,
   } = useSauceFeed()
@@ -83,15 +85,28 @@ export default function SauceFeed() {
         </div>
       )}
 
-      <main ref={feedRef} className="sauce-feed" aria-label="Random sauce feed">
-        {items.map((sauce, i) => (
-          <SauceCard
-            key={`${sauce.id}-${i}`}
-            sauce={sauce}
-            blurred={blurred}
-            onToggleBlur={toggleBlur}
-          />
-        ))}
+      <main
+        ref={feedRef}
+        onScroll={onFeedScroll}
+        className="sauce-feed"
+        aria-label="Random sauce feed"
+      >
+        {items.map((sauce, i) =>
+          // Windowing: only the active card ±2 is mounted. Far cards
+          // render as placeholders carrying the .sauce-card class, so
+          // height/snap geometry is identical and scrolling is
+          // undisturbed; a placeholder has no img, hooks, or network.
+          Math.abs(i - activeIndex) > 2 ? (
+            <div key={`${sauce.id}-${i}`} className="sauce-card" aria-hidden="true" />
+          ) : (
+            <SauceCard
+              key={`${sauce.id}-${i}`}
+              sauce={sauce}
+              blurred={blurred}
+              onToggleBlur={toggleBlur}
+            />
+          ),
+        )}
         {/* sentinel rendered after the list: the observer fires as the
             last cards come into view, which triggers the next top-up */}
         <div ref={sentinelRef} className="h-px" aria-hidden />
