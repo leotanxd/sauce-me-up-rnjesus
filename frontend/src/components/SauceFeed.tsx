@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Sauce } from "../types"
-import { fetchNextSauce, fetchSauceBatch } from "../lib/api"
+import { BATCH_SIZE, fetchNextSauce, fetchSauceBatch } from "../lib/api"
 import SauceCard from "./SauceCard"
 import LoadingGirl from "./LoadingGirl"
-
-const PREFETCH_AT = 2 // fetch more when this many cards remain below
-const BATCH_SIZE = 3 // sauces generated per load / top-up
 
 export default function SauceFeed() {
   const [items, setItems] = useState<Sauce[]>([])
@@ -27,7 +24,7 @@ export default function SauceFeed() {
       fresh.forEach((s) => seenRef.current.add(s.id))
       setItems((prev) => [...prev, ...fresh])
     } catch (e) {
-      setError("Could not load more. Scroll back and try again.")
+      setError("Could not load sauce. Check your connection and try again.")
     } finally {
       loadingRef.current = false
       setLoadingMore(false)
@@ -63,7 +60,16 @@ export default function SauceFeed() {
     return (
       <main className="h-[100dvh] bg-black text-white flex flex-col items-center justify-center gap-3">
         {error ? (
-          <p className="text-sm text-neutral-400">{error}</p>
+          <>
+            <p className="text-sm text-neutral-400">{error}</p>
+            <button
+              type="button"
+              onClick={() => { setError(null); void loadMore(BATCH_SIZE) }}
+              className="rounded-full bg-white/10 px-4 py-2 text-sm text-white border border-white/20"
+            >
+              Tap to retry
+            </button>
+          </>
         ) : (
           <LoadingGirl label="Loading your first sauce…" />
         )}
@@ -104,8 +110,8 @@ export default function SauceFeed() {
             onToggleBlur={() => setBlurred((b) => !b)}
           />
         ))}
-        {/* sentinel sits PREFETCH_AT cards before the end in effect:
-            it's rendered after the list, IO fires as the last cards show */}
+        {/* sentinel rendered after the list: the observer fires as the
+            last cards come into view, which triggers the next top-up */}
         <div ref={sentinelRef} className="h-px" aria-hidden />
       </main>
     </div>

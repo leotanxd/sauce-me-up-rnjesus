@@ -1,7 +1,5 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where(.dark, .dark *));
-
 /* Dark by default — requirement 1. The Film Camera template's light
    tokens are replaced with a true-black feed theme. */
 @theme {

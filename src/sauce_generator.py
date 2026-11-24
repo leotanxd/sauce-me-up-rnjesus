@@ -10,6 +10,7 @@ This version uses keyless API access:
 
 import json
 import random
+import threading
 import time
 import webbrowser
 from urllib.error import HTTPError, URLError
@@ -24,7 +25,7 @@ PUBLIC_GALLERY_URL_TEMPLATE = "https://nhentai.net/g/{gallery_id}/"
 
 USER_AGENT = (
     "SauceMeUpRNJesus/1.0 "
-    "(https://github.com/leojhttan/sauce-me-up-rnjesus)"
+    "(https://github.com/leotanxd/sauce-me-up-rnjesus)"
 )
 
 REQUEST_TIMEOUT_SECONDS = 10
@@ -41,6 +42,8 @@ class SauceGenerator:
         self.browser = browser if browser is not None else webbrowser
         self._cdn_data: dict | None = None  # cached GET /api/v2/cdn response
         self._search_num_pages: int | None = None  # learned from page 1
+        self._pool: list = []  # shuffled search results waiting to be served
+        self._lock = threading.Lock()  # guards _pool and the lazy caches
 
     def _build_search_url(self, page: int = 1) -> str:
         """Build the API search URL for English-language galleries."""
@@ -137,36 +140,49 @@ class SauceGenerator:
 
         raise RuntimeError(f"Could not retrieve data after retries: {last_error}")
 
-    def get_random_english_gallery(self) -> dict:
-        """Return one randomly selected English-language gallery.
+    def _refill_pool(self) -> None:
+        """Fetch one random search page and pool ALL its results.
 
-        Picks from a RANDOM search page, not just page 1, so repeated
-        calls draw from the whole English catalogue (100k+ galleries)
-        instead of the ~25 newest — every call can return something
-        different. The page count is learned once and cached.
+        Caller must hold self._lock. One search call yields ~25
+        galleries, so pooling cuts search traffic roughly 25x versus
+        fetching a page per pick. Pages are random across the whole
+        English catalogue, so picks are not limited to the newest.
         """
         if self._search_num_pages is None:
-            first_page = self._request_json(self._build_search_url(1))
-            num_pages = first_page.get("num_pages")
+            data = self._request_json(self._build_search_url(1))
+            num_pages = data.get("num_pages")
             self._search_num_pages = (
                 num_pages if isinstance(num_pages, int) and num_pages > 0 else 1
             )
-            galleries = first_page.get("result", [])
+            results = data.get("result", [])
         else:
             page = random.randint(1, self._search_num_pages)
-            search_results = self._request_json(self._build_search_url(page))
-            galleries = search_results.get("result", [])
-            if not isinstance(galleries, list) or not galleries:
+            data = self._request_json(self._build_search_url(page))
+            results = data.get("result", [])
+            if not isinstance(results, list) or not results:
                 # Stale/empty page — fall back to page 1.
-                first_page = self._request_json(self._build_search_url(1))
-                galleries = first_page.get("result", [])
+                data = self._request_json(self._build_search_url(1))
+                results = data.get("result", [])
 
-        if not isinstance(galleries, list) or not galleries:
+        if not isinstance(results, list) or not results:
             raise RuntimeError(
                 "No English-language galleries were returned by the API."
             )
 
-        return random.choice(galleries)
+        pool = [g for g in results if isinstance(g, dict) and "id" in g]
+        random.shuffle(pool)
+        self._pool = pool
+
+    def get_random_english_gallery(self) -> dict:
+        """Return one English-language gallery from the result pool.
+
+        The pool is refilled from a random search page only when it
+        runs out, so most calls cost no network request at all.
+        """
+        with self._lock:
+            if not self._pool:
+                self._refill_pool()
+            return self._pool.pop()
 
     def get_gallery_details(self, gallery_id: int) -> dict:
         """Optionally retrieve more information about a selected gallery."""
@@ -196,9 +212,10 @@ class SauceGenerator:
         if not relative_media_path:
             raise RuntimeError("The API did not provide a media path.")
 
-        if self._cdn_data is None:
-            self._cdn_data = self._request_json(CDN_URL)
-        cdn_data = self._cdn_data
+        with self._lock:
+            if self._cdn_data is None:
+                self._cdn_data = self._request_json(CDN_URL)
+            cdn_data = self._cdn_data
 
         filename = relative_media_path.rsplit("/", 1)[-1]
         stem = filename.split(".", 1)[0]
@@ -210,12 +227,10 @@ class SauceGenerator:
             candidates = [
                 cdn_data.get("thumb_servers"),
                 cdn_data.get("image_servers"),
-                cdn_data.get("servers"),  # legacy key, if it ever returns
             ]
         else:
             candidates = [
                 cdn_data.get("image_servers"),
-                cdn_data.get("servers"),  # legacy key, if it ever returns
                 cdn_data.get("thumb_servers"),
             ]
 
@@ -243,7 +258,13 @@ class SauceGenerator:
             return
 
         gallery_id = gallery.get("id", "Unknown")
-        title = gallery.get("title", {}).get("pretty", "Untitled")
+        # Search items carry a flat english_title; a nested title dict
+        # only appears on gallery DETAIL responses, not in search.
+        raw_title = gallery.get("title")
+        if isinstance(raw_title, dict):
+            title = raw_title.get("english") or raw_title.get("pretty") or "Untitled"
+        else:
+            title = gallery.get("english_title") or "Untitled"
 
         print("Here is your random English sauce:")
         print(f"Gallery ID: {gallery_id}")

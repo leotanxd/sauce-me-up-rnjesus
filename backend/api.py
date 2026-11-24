@@ -20,6 +20,8 @@ on demand when the user pages through a sauce with the arrow keys.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -91,11 +93,6 @@ def _first_media_path(detail: dict, gallery: dict) -> str | None:
         found = path_of(source.get(key))
         if found:
             return found
-
-    # Legacy v1 shape fallback: {"images": {"pages": [...]}}
-    legacy_pages = _as_dict(detail.get("images")).get("pages")
-    if isinstance(legacy_pages, list) and legacy_pages:
-        return path_of(legacy_pages[0])
     return None
 
 
@@ -103,9 +100,41 @@ def _first_media_path(detail: dict, gallery: dict) -> str | None:
 # IDs served recently by this process. New picks skip these, so a batch
 # never contains duplicates and a refresh shows different sauces. The
 # window is bounded; very old IDs become eligible again eventually.
+# _pick_lock makes the whole pick -> verify -> remember sequence atomic:
+# FastAPI runs these sync endpoints in a threadpool, so without it two
+# concurrent requests could pass the "not served yet" check together.
 _RECENT_MAX = 300
 _recent_ids: deque = deque(maxlen=_RECENT_MAX)
 _recent_set: set = set()
+_pick_lock = threading.Lock()
+
+# Wall-clock budgets so a request can never hang for minutes through
+# the retry/re-roll chain: one pick gets ~20s, a whole batch ~45s.
+_PICK_BUDGET_SECONDS = 20.0
+_BATCH_BUDGET_SECONDS = 45.0
+
+# Short-lived gallery-detail cache: /next fetches a detail, and /pages
+# for the same gallery usually follows seconds later — don't pay the
+# upstream detail call twice. Bounded and TTL'd; details don't change.
+_DETAIL_TTL_SECONDS = 300.0
+_DETAIL_CACHE_MAX = 128
+_detail_cache: dict = {}
+_detail_lock = threading.Lock()
+
+
+def _get_detail(gallery_id: int) -> dict:
+    now = time.monotonic()
+    with _detail_lock:
+        hit = _detail_cache.get(gallery_id)
+        if hit and now - hit[0] < _DETAIL_TTL_SECONDS:
+            return hit[1]
+    raw_detail = _generator.get_gallery_details(gallery_id)
+    detail = _as_dict(raw_detail.get("result", raw_detail))
+    with _detail_lock:
+        if len(_detail_cache) >= _DETAIL_CACHE_MAX:
+            _detail_cache.clear()
+        _detail_cache[gallery_id] = (now, detail)
+    return detail
 
 
 def _remember_served(gallery_id: int) -> None:
@@ -132,64 +161,71 @@ def _is_english(detail: dict) -> bool | None:
     return "english" in languages
 
 
-def _next_sauce() -> dict:
+def _next_sauce(deadline: float | None = None) -> dict:
     # The search already filters language:english; still, verify each pick
     # against its detail tags and re-roll a non-English result, so what the
     # API returns — and the frontend displays — is English sauce. Picks
     # also skip anything served recently, so sauces never repeat within a
     # batch or across refreshes (while this process keeps its memory).
-    for _attempt in range(8):
-        try:
-            gallery = _generator.get_random_english_gallery()
-            gallery_id = int(gallery["id"])
-        except Exception as error:  # upstream failure / bad payload
-            raise HTTPException(status_code=502, detail=str(error)) from error
+    # The whole sequence runs under _pick_lock so it is atomic, and it
+    # gives up at the deadline instead of hanging through endless retries.
+    if deadline is None:
+        deadline = time.monotonic() + _PICK_BUDGET_SECONDS
 
-        if gallery_id in _recent_set:
-            continue  # already served recently — pick another gallery
+    with _pick_lock:
+        for _attempt in range(8):
+            if time.monotonic() > deadline:
+                break
+            try:
+                gallery = _generator.get_random_english_gallery()
+                gallery_id = int(gallery["id"])
+            except Exception as error:  # upstream failure / bad payload
+                raise HTTPException(status_code=502, detail=str(error)) from error
 
-        detail: dict = {}
-        try:
-            raw_detail = _generator.get_gallery_details(gallery_id)
-            detail = _as_dict(raw_detail.get("result", raw_detail))
-        except Exception:
-            detail = {}  # details are optional; the search result may suffice
+            if gallery_id in _recent_set:
+                continue  # already served recently — pick another gallery
 
-        if _is_english(detail) is False:
-            continue  # not English — pick another gallery
+            detail: dict = {}
+            try:
+                detail = _get_detail(gallery_id)
+            except Exception:
+                detail = {}  # details are optional; the search result may suffice
 
-        first_path = _first_media_path(detail, gallery)
-        first_image_url: str | None = None
-        if first_path:
-            if first_path.startswith("http://") or first_path.startswith("https://"):
-                first_image_url = first_path
-            else:
-                try:
-                    first_image_url = _generator.build_media_url(first_path)
-                except Exception:
-                    first_image_url = None
+            if _is_english(detail) is False:
+                continue  # not English — pick another gallery
 
-        # English title FIRST: the search item's english_title, then the
-        # detail's title.english. title.pretty is often the Japanese title
-        # even for English galleries, so it is only a last resort.
-        title_obj = _as_dict(detail.get("title"))
-        _remember_served(gallery_id)
-        return {
-            "id": gallery_id,
-            "title": (
-                gallery.get("english_title")
-                or title_obj.get("english")
-                or title_obj.get("pretty")
-                or "Untitled"
-            ),
-            "url": _generator.build_gallery_url(gallery),
-            # ONLY the first retrieval item. Do not add pages[] here.
-            "firstImageUrl": first_image_url,
-        }
+            first_path = _first_media_path(detail, gallery)
+            first_image_url: str | None = None
+            if first_path:
+                if first_path.startswith("http://") or first_path.startswith("https://"):
+                    first_image_url = first_path
+                else:
+                    try:
+                        first_image_url = _generator.build_media_url(first_path)
+                    except Exception:
+                        first_image_url = None
+
+            # English title FIRST: the search item's english_title, then
+            # the detail's title.english. title.pretty is often the
+            # Japanese title even for English galleries — last resort only.
+            title_obj = _as_dict(detail.get("title"))
+            _remember_served(gallery_id)
+            return {
+                "id": gallery_id,
+                "title": (
+                    gallery.get("english_title")
+                    or title_obj.get("english")
+                    or title_obj.get("pretty")
+                    or "Untitled"
+                ),
+                "url": _generator.build_gallery_url(gallery),
+                # ONLY the first retrieval item. Do not add pages[] here.
+                "firstImageUrl": first_image_url,
+            }
 
     raise HTTPException(
         status_code=502,
-        detail="Could not find a new English-language gallery. Please retry.",
+        detail="Could not find a new English-language gallery in time. Please retry.",
     )
 
 
@@ -205,10 +241,17 @@ def sauce_next() -> dict:
 
 @app.get("/api/sauce/batch")
 def sauce_batch(n: int = Query(default=3, ge=1, le=10)) -> dict:
+    # One overall deadline for the batch: return what was generated in
+    # time rather than hanging. (The default n mirrors the frontend's
+    # BATCH_SIZE in frontend/src/lib/api.ts — keep them in step.)
+    deadline = time.monotonic() + _BATCH_BUDGET_SECONDS
     items, errors = [], 0
     for _ in range(n):
+        if time.monotonic() > deadline:
+            errors += 1
+            break
         try:
-            items.append(_next_sauce())
+            items.append(_next_sauce(deadline=deadline))
         except HTTPException:
             errors += 1
     if not items:
@@ -228,8 +271,7 @@ def sauce_pages(gallery_id: int) -> dict:
     used verbatim.
     """
     try:
-        raw_detail = _generator.get_gallery_details(gallery_id)
-        detail = _as_dict(raw_detail.get("result", raw_detail))
+        detail = _get_detail(gallery_id)
     except Exception as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
 

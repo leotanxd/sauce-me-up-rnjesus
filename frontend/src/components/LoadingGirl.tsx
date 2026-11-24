@@ -1,4 +1,5 @@
-import { LOADING_GIRL_SRC } from "../assets/loadingGirl"
+import { useEffect, useState } from "react"
+import { LOADING_GIRL_POSTER } from "../assets/loadingGirlPoster"
 
 interface LoadingGirlProps {
   label: string
@@ -7,14 +8,31 @@ interface LoadingGirlProps {
 
 /**
  * Loading indicator: a small looping animation of a cute anime girl
- * sitting and waiting (embedded in src/assets/loadingGirl.ts), with a
- * caption. Shown on first load and again while more sauces generate.
+ * sitting and waiting, with a caption. Shown on first load and again
+ * while more sauces generate.
+ *
+ * The video itself (~550 KB of base64 in src/assets/loadingGirl.ts) is
+ * loaded via dynamic import() so Vite splits it into a separate chunk:
+ * the main bundle stays small and paints immediately, the poster frame
+ * shows instantly, and the animation swaps in as soon as its chunk
+ * arrives.
  */
 export default function LoadingGirl({ label, small = false }: LoadingGirlProps) {
+  const [src, setSrc] = useState<string | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+    import("../assets/loadingGirl")
+      .then((m) => { if (!cancelled) setSrc(m.LOADING_GIRL_SRC) })
+      .catch(() => { /* poster remains — purely cosmetic */ })
+    return () => { cancelled = true }
+  }, [])
+
   return (
     <div className="flex flex-col items-center gap-2" role="status" aria-label={label}>
       <video
-        src={LOADING_GIRL_SRC}
+        src={src}
+        poster={LOADING_GIRL_POSTER}
         autoPlay
         loop
         muted
