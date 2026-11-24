@@ -1,344 +1,38 @@
-"""Generate and open a random English-language nhentai gallery.
+"""Backwards-compatible shim for the pre-refactor module layout.
 
-This version uses keyless API access:
-- No Authorization header or API key is required.
-- A descriptive User-Agent header identifies this application.
-- The application searches for English galleries through the API.
-- It selects one gallery at random and opens its public website page.
-- Image URLs, if needed, are built only from API-provided CDN data.
+The implementation now lives in small focused modules:
+- http_client.py — retrying JSON transport with deadlines
+- cdn.py         — MediaUrlBuilder (CDN image URLs)
+- pools.py       — SearchPool (per-mode result pools)
+- models.py      — GallerySummary / GalleryDetail (parsed payloads)
+- client.py      — NhentaiClient (the facade the backend uses)
+- cli.py         — the command-line entry point
+
+This module re-exports the old names so existing imports keep working.
 """
 
-import json
-import logging
-import random
-import threading
-import time
 import webbrowser
 
-logger = logging.getLogger(__name__)
+from client import NhentaiClient
+from errors import ResourceNotFoundError
+
+__all__ = ["SauceGenerator", "ResourceNotFoundError"]
 
 
-class ResourceNotFoundError(RuntimeError):
-    """The upstream API returned 404 for the requested resource."""
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+class SauceGenerator(NhentaiClient):
+    """The old combined class, kept as a compatible facade.
 
+    Historically this also carried the CLI's concerns (order_count,
+    browser, open()); those now live in cli.py, but the attributes are
+    preserved here so old call sites keep working.
+    """
 
-SEARCH_URL = "https://nhentai.net/api/v2/search"
-GALLERY_DETAIL_URL_TEMPLATE = "https://nhentai.net/api/v2/galleries/{gallery_id}"
-CDN_URL = "https://nhentai.net/api/v2/cdn"
-PUBLIC_GALLERY_URL_TEMPLATE = "https://nhentai.net/g/{gallery_id}/"
-
-USER_AGENT = (
-    "SauceMeUpRNJesus/1.0 "
-    "(https://github.com/leotanxd/sauce-me-up-rnjesus)"
-)
-
-REQUEST_TIMEOUT_SECONDS = 10
-MAX_RETRIES = 3
-INITIAL_RETRY_DELAY_SECONDS = 2
-MAX_JITTER_SECONDS = 1
-
-
-class SauceGenerator:
-    """Retrieves and opens a random English-language gallery."""
-
-    def __init__(self, order_count: int = 1, browser=None):
+    def __init__(self, order_count: int = 1, browser=None, **kwargs):
+        super().__init__(**kwargs)
         self.order_count = order_count
         self.browser = browser if browser is not None else webbrowser
-        self._cdn_data: dict | None = None  # cached GET /api/v2/cdn response
-        # Two feed modes, each with its own result pool and learned page
-        # count: "random" (default — the whole catalogue, newest-first
-        # pages drawn at random) and "popular" (the API's popular-week
-        # sort — what is currently very popular).
-        self._search_num_pages: dict = {"random": None, "popular": None}
-        self._pool: dict = {"random": [], "popular": []}
-        self._lock = threading.Lock()  # guards _pool and the lazy caches
-
-    def _build_search_url(self, page: int = 1, mode: str = "random") -> str:
-        """Build the API search URL for English-language galleries."""
-        params = {"query": "language:english", "page": page}
-        if mode == "popular":
-            params["sort"] = "popular-week"
-        return f"{SEARCH_URL}?{urlencode(params)}"
-
-    def _retry_delay(self, attempt: int) -> float:
-        """Calculate exponential backoff with random jitter."""
-        base_delay = INITIAL_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
-        jitter = random.uniform(0, MAX_JITTER_SECONDS)
-        return base_delay + jitter
-
-    def _request_json(self, url: str, deadline: float | None = None) -> dict:
-        """Request JSON data without authentication, with retries.
-
-        ``deadline`` (a time.monotonic() timestamp) hard-caps the whole
-        operation: each attempt's timeout shrinks to the remaining
-        budget, and a backoff sleep that would overrun the deadline is
-        skipped in favour of failing fast.
-        """
-        last_error = None
-
-        def remaining() -> float | None:
-            return None if deadline is None else deadline - time.monotonic()
-
-        def sleep_before_retry(attempt: int, error: HTTPError | None) -> None:
-            delay = self._retry_delay(attempt)
-            # Honour the upstream's Retry-After as a floor for the delay.
-            if error is not None and error.headers is not None:
-                retry_after = error.headers.get("Retry-After")
-                if retry_after:
-                    try:
-                        delay = max(delay, float(retry_after))
-                    except ValueError:
-                        pass
-            left = remaining()
-            if left is not None and time.monotonic() + delay > deadline:
-                raise RuntimeError("Upstream request deadline exceeded.")
-            time.sleep(delay)
-
-        for attempt in range(1, MAX_RETRIES + 1):
-            left = remaining()
-            if left is not None and left <= 0:
-                raise RuntimeError("Upstream request deadline exceeded.")
-            timeout = (
-                REQUEST_TIMEOUT_SECONDS
-                if left is None
-                else min(REQUEST_TIMEOUT_SECONDS, left)
-            )
-            request = Request(
-                url,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept": "application/json",
-                },
-            )
-
-            try:
-                with urlopen(request, timeout=timeout) as response:
-                    # Non-200 statuses raise HTTPError via urlopen, so a
-                    # response here is a success.
-                    return json.loads(response.read().decode("utf-8"))
-
-            except HTTPError as error:
-                status_code = error.code
-                last_error = error
-
-                if status_code == 404:
-                    raise ResourceNotFoundError(
-                        "The requested API resource could not be found."
-                    ) from error
-
-                if status_code == 401:
-                    raise RuntimeError(
-                        "The API rejected the request because authentication "
-                        "is required for this endpoint."
-                    ) from error
-
-                if status_code == 403:
-                    raise RuntimeError(
-                        "The API refused the request. This endpoint may be "
-                        "restricted or unavailable to this client."
-                    ) from error
-
-                if (status_code == 429 or 500 <= status_code < 600) and (
-                    attempt < MAX_RETRIES
-                ):
-                    logger.warning(
-                        "Upstream HTTP %s on attempt %s; retrying.",
-                        status_code,
-                        attempt,
-                    )
-                    error.close()
-                    sleep_before_retry(attempt, error)
-                    continue
-
-                raise RuntimeError(
-                    f"Could not retrieve data from the API: HTTP {status_code}"
-                ) from error
-
-            except (URLError, TimeoutError, ConnectionError) as error:
-                last_error = error
-
-                if attempt < MAX_RETRIES:
-                    logger.warning("Network issue on attempt %s; retrying.", attempt)
-                    sleep_before_retry(attempt, None)
-                    continue
-
-                raise RuntimeError(
-                    f"Could not connect to the API: {error}"
-                ) from error
-
-            except (json.JSONDecodeError, UnicodeDecodeError) as error:
-                raise RuntimeError(
-                    "The API returned data that could not be understood."
-                ) from error
-
-        raise RuntimeError(f"Could not retrieve data after retries: {last_error}")
-
-    def _refill_pool(self, mode: str = "random", deadline: float | None = None) -> None:
-        """Fetch one random search page and pool ALL its results.
-
-        Caller must hold self._lock. One search call yields ~25
-        galleries, so pooling cuts search traffic roughly 25x versus
-        fetching a page per pick. Pages are random across the mode's
-        whole result set, so picks are not limited to the first page.
-        """
-        if self._search_num_pages[mode] is None:
-            data = self._request_json(self._build_search_url(1, mode), deadline=deadline)
-            num_pages = data.get("num_pages")
-            self._search_num_pages[mode] = (
-                num_pages if isinstance(num_pages, int) and num_pages > 0 else 1
-            )
-            results = data.get("result", [])
-        else:
-            page = random.randint(1, self._search_num_pages[mode])
-            data = self._request_json(
-                self._build_search_url(page, mode), deadline=deadline
-            )
-            results = data.get("result", [])
-            if not isinstance(results, list) or not results:
-                # Stale/empty page — fall back to page 1.
-                data = self._request_json(
-                    self._build_search_url(1, mode), deadline=deadline
-                )
-                results = data.get("result", [])
-
-        if not isinstance(results, list) or not results:
-            raise RuntimeError(
-                "No English-language galleries were returned by the API."
-            )
-
-        pool = [g for g in results if isinstance(g, dict) and "id" in g]
-        random.shuffle(pool)
-        self._pool[mode] = pool
-
-    def get_random_english_gallery(
-        self, deadline: float | None = None, popular: bool = False
-    ) -> dict:
-        """Return one English-language gallery from the result pool.
-
-        The pool is refilled from a random search page only when it
-        runs out, so most calls cost no network request at all. With
-        popular=True the pool draws from the API's popular-week sort
-        (currently very popular) instead of the whole catalogue.
-        """
-        mode = "popular" if popular else "random"
-        with self._lock:
-            if not self._pool[mode]:
-                self._refill_pool(mode, deadline=deadline)
-            return self._pool[mode].pop()
-
-    def get_gallery_details(
-        self, gallery_id: int, deadline: float | None = None
-    ) -> dict:
-        """Optionally retrieve more information about a selected gallery."""
-        detail_url = GALLERY_DETAIL_URL_TEMPLATE.format(gallery_id=gallery_id)
-        return self._request_json(detail_url, deadline=deadline)
-
-    def build_gallery_url(self, gallery: dict) -> str:
-        """Create the public nhentai website link for a gallery."""
-        try:
-            gallery_id = int(gallery["id"])
-        except (KeyError, TypeError, ValueError) as error:
-            raise RuntimeError(
-                "The API response did not contain a valid gallery ID."
-            ) from error
-
-        return PUBLIC_GALLERY_URL_TEMPLATE.format(gallery_id=gallery_id)
-
-    def build_media_url(
-        self, relative_media_path: str, deadline: float | None = None
-    ) -> str:
-        """Build an image URL using an API-provided CDN server and path.
-
-        Per the API v2 docs (GET /api/v2/cdn), the CDN config returns
-        ``image_servers`` and ``thumb_servers`` — there is no ``servers``
-        key. A full URL is one server + the path, used exactly as the
-        API returned it. Thumbnail paths live on the thumb servers;
-        page and cover paths live on the image servers.
-        """
-        if not relative_media_path:
-            raise RuntimeError("The API did not provide a media path.")
-
-        with self._lock:
-            if self._cdn_data is None:
-                self._cdn_data = self._request_json(CDN_URL, deadline=deadline)
-            cdn_data = self._cdn_data
-
-        filename = relative_media_path.rsplit("/", 1)[-1]
-        stem = filename.split(".", 1)[0]
-        is_thumbnail = "thumb" in filename or (
-            stem.endswith("t") and stem[:-1].isdigit()
-        )
-
-        if is_thumbnail:
-            candidates = [
-                cdn_data.get("thumb_servers"),
-                cdn_data.get("image_servers"),
-            ]
-        else:
-            candidates = [
-                cdn_data.get("image_servers"),
-                cdn_data.get("thumb_servers"),
-            ]
-
-        servers = next(
-            (s for s in candidates if isinstance(s, list) and s), None
-        )
-        if not servers:
-            raise RuntimeError("The API did not provide an available CDN server.")
-
-        server = random.choice(servers)
-
-        if not isinstance(server, str) or not server:
-            raise RuntimeError("The API returned an invalid CDN server.")
-
-        # Use the API-provided path exactly as returned.
-        return f"{server.rstrip('/')}/{relative_media_path.lstrip('/')}"
 
     def open(self) -> None:
-        """Find one random English gallery and open its website page."""
-        try:
-            gallery = self.get_random_english_gallery()
-            gallery_url = self.build_gallery_url(gallery)
-        except RuntimeError as error:
-            print(error)
-            return
+        from cli import open_gallery
 
-        gallery_id = gallery.get("id", "Unknown")
-        # Search items carry a flat english_title; a nested title dict
-        # only appears on gallery DETAIL responses, not in search.
-        raw_title = gallery.get("title")
-        if isinstance(raw_title, dict):
-            title = raw_title.get("english") or raw_title.get("pretty") or "Untitled"
-        else:
-            title = gallery.get("english_title") or "Untitled"
-
-        print("Here is your random English sauce:")
-        print(f"Gallery ID: {gallery_id}")
-        print(f"Title: {title}")
-        print(gallery_url)
-
-        self.browser.open(gallery_url, 0, True)
-
-
-class SauceApp:
-    """Runs the sauce generator a chosen number of times."""
-
-    def __init__(self, generator: SauceGenerator):
-        self.generator = generator
-
-    def run(self) -> None:
-        for _ in range(self.generator.order_count):
-            self.generator.open()
-
-
-def main() -> None:
-    generator = SauceGenerator()
-    app = SauceApp(generator=generator)
-    app.run()
-
-
-if __name__ == "__main__":
-    main()
+        open_gallery(self, self.browser)

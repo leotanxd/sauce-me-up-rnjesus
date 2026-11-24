@@ -1,4 +1,4 @@
-"""HTTP API wrapper around src/sauce_generator.SauceGenerator.
+"""HTTP API wrapper around the upstream client in src/client.py.
 
 Run:
     pip install -r backend/requirements.txt
@@ -27,7 +27,6 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,7 +35,9 @@ from fastapi.staticfiles import StaticFiles
 # Make the existing backend importable without changing its layout.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from sauce_generator import ResourceNotFoundError, SauceGenerator  # noqa: E402
+from client import NhentaiClient  # noqa: E402
+from errors import ResourceNotFoundError  # noqa: E402
+from models import GalleryDetail  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -53,61 +54,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_generator = SauceGenerator()
-
-
-def _as_dict(value: Any) -> dict:
-    return value if isinstance(value, dict) else {}
-
-
-def _first_media_path(detail: dict, gallery: dict) -> str | None:
-    """Return the FIRST page's relative media path, per the API v2 docs.
-
-    Gallery detail (GalleryDetailResponse) carries:
-      pages[]  — each {number, path, width, height, thumbnail, ...}
-      cover    — {path, width, height}
-      thumbnail— {path, width, height}
-    Search items (GalleryListItem) carry only a flat ``thumbnail`` string.
-    Paths are relative and must be used exactly as returned; the caller
-    prefixes a CDN server from GET /api/v2/cdn (see build_media_url).
-    Priority: first page by number, then cover, then thumbnail.
-    """
-    def path_of(v: Any) -> str | None:
-        if isinstance(v, str) and v:
-            return v
-        if isinstance(v, dict):
-            p = v.get("path") or v.get("url")
-            if isinstance(p, str) and p:
-                return p
-        return None
-
-    pages = detail.get("pages")
-    if isinstance(pages, list) and pages:
-        dict_pages = [p for p in pages if isinstance(p, dict)]
-        if dict_pages:
-            # A page with no number sorts LAST, never before page 1.
-            first = min(
-                dict_pages,
-                key=lambda p: (
-                    p.get("number")
-                    if isinstance(p.get("number"), int)
-                    else float("inf")
-                ),
-            )
-            found = path_of(first)  # first page only — never the rest
-            if found:
-                return found
-
-    for source, key in (
-        (detail, "cover"),
-        (detail, "thumbnail"),
-        (gallery, "thumbnail"),  # flat string on search items
-        (gallery, "cover"),
-    ):
-        found = path_of(source.get(key))
-        if found:
-            return found
-    return None
+_generator = NhentaiClient()
 
 
 # --- No-repeat memory ------------------------------------------------------
@@ -136,14 +83,13 @@ _detail_cache: dict = {}
 _detail_lock = threading.Lock()
 
 
-def _get_detail(gallery_id: int, deadline: float | None = None) -> dict:
+def _get_detail(gallery_id: int, deadline: float | None = None) -> GalleryDetail:
     now = time.monotonic()
     with _detail_lock:
         hit = _detail_cache.get(gallery_id)
         if hit and now - hit[0] < _DETAIL_TTL_SECONDS:
             return hit[1]
-    raw_detail = _generator.get_gallery_details(gallery_id, deadline=deadline)
-    detail = _as_dict(raw_detail.get("result", raw_detail))
+    detail = _generator.get_gallery_details(gallery_id, deadline=deadline)
     with _detail_lock:
         if len(_detail_cache) >= _DETAIL_CACHE_MAX:
             _detail_cache.clear()
@@ -158,21 +104,6 @@ def _remember_served(gallery_id: int) -> None:
         _recent_set.discard(_recent_ids[0])
     _recent_ids.append(gallery_id)
     _recent_set.add(gallery_id)
-
-
-def _is_english(detail: dict) -> bool | None:
-    """Check the detail's language tags. None = unknown (no tags to check)."""
-    tags = detail.get("tags")
-    if not isinstance(tags, list) or not tags:
-        return None
-    languages = {
-        t.get("name")
-        for t in tags
-        if isinstance(t, dict) and t.get("type") == "language"
-    }
-    if not languages:
-        return None
-    return "english" in languages
 
 
 def _next_sauce(deadline: float | None = None, popular: bool = False) -> dict:
@@ -194,7 +125,7 @@ def _next_sauce(deadline: float | None = None, popular: bool = False) -> dict:
                 gallery = _generator.get_random_english_gallery(
                     deadline=deadline, popular=popular
                 )
-                gallery_id = int(gallery["id"])
+                gallery_id = gallery.id
             except Exception as error:  # upstream failure / bad payload
                 logger.warning("Pick failed: %s", error)
                 raise HTTPException(status_code=502, detail=_UPSTREAM_502) from error
@@ -202,22 +133,21 @@ def _next_sauce(deadline: float | None = None, popular: bool = False) -> dict:
             if gallery_id in _recent_set:
                 continue  # already served recently — pick another gallery
 
-            detail: dict = {}
+            detail = GalleryDetail.empty(gallery_id)
             try:
                 detail = _get_detail(gallery_id, deadline=deadline)
             except Exception:
-                detail = {}  # details are optional; the search result may suffice
-            if not detail:
+                # Details are optional; the search result may suffice.
                 # Accepted on the search filter alone — visible in logs
                 # so silent degradation doesn't go unnoticed.
                 logger.warning(
                     "Serving gallery %s without detail verification.", gallery_id
                 )
 
-            if _is_english(detail) is False:
+            if detail.is_english is False:
                 continue  # not English — pick another gallery
 
-            first_path = _first_media_path(detail, gallery)
+            first_path = detail.first_media_path(gallery)
             first_image_url: str | None = None
             if first_path:
                 if first_path.startswith("http://") or first_path.startswith("https://"):
@@ -230,28 +160,20 @@ def _next_sauce(deadline: float | None = None, popular: bool = False) -> dict:
                     except Exception:
                         first_image_url = None
 
-            # English title FIRST: the search item's english_title, then
-            # the detail's title.english. title.pretty is often the
-            # Japanese title even for English galleries — last resort only.
-            title_obj = _as_dict(detail.get("title"))
-            # Total page count comes free from the detail already
-            # fetched for verification — the feed shows "Page 1 of N"
-            # without the page URLs themselves ever leaving /pages.
-            detail_pages = detail.get("pages")
-            page_count = len(detail_pages) if isinstance(detail_pages, list) else None
             _remember_served(gallery_id)
             return {
                 "id": gallery_id,
-                "title": (
-                    gallery.get("english_title")
-                    or title_obj.get("english")
-                    or title_obj.get("pretty")
-                    or "Untitled"
-                ),
+                # Title priority lives on the models: search
+                # english_title, then detail title.english, then
+                # title.pretty (last resort), then "Untitled".
+                "title": detail.display_title(gallery),
                 "url": _generator.build_gallery_url(gallery),
                 # ONLY the first retrieval item. Do not add pages[] here.
                 "firstImageUrl": first_image_url,
-                "pageCount": page_count,
+                # Total page count comes free from the detail already
+                # fetched for verification — the feed shows
+                # "Page 1 of N" without page URLs ever leaving /pages.
+                "pageCount": detail.page_count,
             }
 
     raise HTTPException(
@@ -315,35 +237,25 @@ def sauce_pages(gallery_id: int) -> dict:
         logger.warning("Detail fetch for %s failed: %s", gallery_id, error)
         raise HTTPException(status_code=502, detail=_UPSTREAM_502) from error
 
-    pages = detail.get("pages")
+    # Page paths arrive pre-sorted from the model (by page number,
+    # number-less pages last) — the one ordering definition in models.py.
     urls: list[str] = []
-    if isinstance(pages, list):
-        dict_pages = [p for p in pages if isinstance(p, dict)]
-        # A page with no number sorts LAST, never before page 1.
-        dict_pages.sort(
-            key=lambda p: (
-                p.get("number") if isinstance(p.get("number"), int) else float("inf")
+    for path in detail.page_paths:
+        try:
+            urls.append(_generator.build_media_url(path, deadline=deadline))
+        except Exception as error:
+            # All-or-nothing: a silently dropped middle page would
+            # shift every later "Page X of Y" label off the truth.
+            logger.warning(
+                "Page URL build failed for gallery %s: %s", gallery_id, error
             )
-        )
-        for page in dict_pages:
-            path = page.get("path")
-            if not isinstance(path, str) or not path:
-                continue
-            try:
-                urls.append(_generator.build_media_url(path, deadline=deadline))
-            except Exception as error:
-                # All-or-nothing: a silently dropped middle page would
-                # shift every later "Page X of Y" label off the truth.
-                logger.warning(
-                    "Page URL build failed for gallery %s: %s", gallery_id, error
-                )
-                raise HTTPException(
-                    status_code=502, detail=_UPSTREAM_502
-                ) from error
+            raise HTTPException(
+                status_code=502, detail=_UPSTREAM_502
+            ) from error
 
     if not urls:
         # Fallback: at least the first page/cover, same as the feed gets.
-        first_path = _first_media_path(detail, {})
+        first_path = detail.first_media_path()
         if first_path:
             try:
                 urls.append(_generator.build_media_url(first_path, deadline=deadline))
