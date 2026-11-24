@@ -7,7 +7,7 @@ Run:
 Endpoints:
     GET /api/health          -> {"status": "ok"}
     GET /api/sauce/next      -> one random gallery, FIRST page image only
-    GET /api/sauce/batch?n=3 -> n x /next (for pre-loading the feed)
+    GET /api/sauce/batch?n=10 -> n x /next (for pre-loading the feed)
 
 Design rule (from the frontend spec): only the first retrieval item is
 ever sent to the client — the first page/cover image of one gallery.
@@ -176,7 +176,7 @@ def sauce_next() -> dict:
 
 
 @app.get("/api/sauce/batch")
-def sauce_batch(n: int = Query(default=3, ge=1, le=10)) -> dict:
+def sauce_batch(n: int = Query(default=10, ge=1, le=10)) -> dict:
     items, errors = [], 0
     for _ in range(n):
         try:

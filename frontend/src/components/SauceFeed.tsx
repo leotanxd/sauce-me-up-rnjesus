@@ -4,6 +4,7 @@ import { fetchNextSauce, fetchSauceBatch } from "../lib/api"
 import SauceCard from "./SauceCard"
 
 const PREFETCH_AT = 2 // fetch more when this many cards remain below
+const BATCH_SIZE = 10 // sauces generated per load / top-up
 
 export default function SauceFeed() {
   const [items, setItems] = useState<Sauce[]>([])
@@ -12,7 +13,7 @@ export default function SauceFeed() {
   const loadingRef = useRef(false)
   const sentinelRef = useRef<HTMLDivElement>(null)
 
-  const loadMore = useCallback(async (n = 3) => {
+  const loadMore = useCallback(async (n = BATCH_SIZE) => {
     if (loadingRef.current) return
     loadingRef.current = true
     try {
@@ -25,14 +26,14 @@ export default function SauceFeed() {
     }
   }, [])
 
-  useEffect(() => { void loadMore(3) }, [loadMore])
+  useEffect(() => { void loadMore(BATCH_SIZE) }, [loadMore])
 
   // Infinite scroll: when the sentinel (near the end) is visible, top up.
   useEffect(() => {
     const el = sentinelRef.current
     if (!el) return
     const obs = new IntersectionObserver(
-      (entries) => { if (entries[0].isIntersecting) void loadMore(3) },
+      (entries) => { if (entries[0].isIntersecting) void loadMore(BATCH_SIZE) },
       { threshold: 0.1 },
     )
     obs.observe(el)
