@@ -1,5 +1,6 @@
 import type { Sauce } from "../types"
 import { useGalleryPages } from "../hooks/useGalleryPages"
+import PillButton, { PILL_BASE } from "./ui/PillButton"
 
 type Props = {
   sauce: Sauce
@@ -41,41 +42,38 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
 
       {/* right rail — blur toggle, source, and page arrows */}
       <div className="absolute right-3 bottom-28 z-10 flex flex-col items-center gap-3">
-        <button
-          type="button"
+        <PillButton
           onClick={onToggleBlur}
           aria-pressed={!blurred}
-          className="rounded-full bg-white/10 backdrop-blur px-3 py-2 text-xs font-medium text-white border border-white/20 active:scale-95"
+          className="backdrop-blur px-3 py-2 text-xs font-medium active:scale-95"
         >
           {blurred ? "👁 Reveal" : "🙈 Blur"}
-        </button>
+        </PillButton>
         <a
           href={sauce.url}
           target="_blank"
           rel="noreferrer"
-          className="rounded-full bg-white/10 backdrop-blur px-3 py-2 text-xs font-medium text-white border border-white/20"
+          className={`${PILL_BASE} backdrop-blur px-3 py-2 text-xs font-medium`}
         >
           ↗ Source
         </a>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
+          <PillButton
             onClick={() => void goToPage(-1)}
             disabled={pageIdx === 0}
             aria-label="Previous page"
-            className="rounded-full bg-white/10 backdrop-blur px-3 py-2 text-sm font-medium text-white border border-white/20 active:scale-95 disabled:opacity-40"
+            className="backdrop-blur px-3 py-2 text-sm font-medium active:scale-95 disabled:opacity-40"
           >
             ‹
-          </button>
-          <button
-            type="button"
+          </PillButton>
+          <PillButton
             onClick={() => void goToPage(1)}
             disabled={totalPages !== undefined && pageIdx >= totalPages - 1}
             aria-label="Next page"
-            className="rounded-full bg-white/10 backdrop-blur px-3 py-2 text-sm font-medium text-white border border-white/20 active:scale-95 disabled:opacity-40"
+            className="backdrop-blur px-3 py-2 text-sm font-medium active:scale-95 disabled:opacity-40"
           >
             ›
-          </button>
+          </PillButton>
         </div>
       </div>
 

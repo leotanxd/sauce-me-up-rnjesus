@@ -1,5 +1,7 @@
 import SauceCard from "./SauceCard"
 import LoadingGirl from "./LoadingGirl"
+import ModeToggle from "./ModeToggle"
+import PillButton from "./ui/PillButton"
 import { useSauceFeed } from "../hooks/useSauceFeed"
 
 /**
@@ -22,47 +24,16 @@ export default function SauceFeed() {
     feedRef,
   } = useSauceFeed()
 
-  // Feed-mode toggle (Random = whole catalogue, Popular = currently
-  // popular), fixed at the top centre in both the loading and feed views.
-  const modeToggle = (
-    <div
-      className="fixed top-3 left-1/2 -translate-x-1/2 z-30 flex rounded-full bg-white/10 backdrop-blur border border-white/20 overflow-hidden"
-      role="group"
-      aria-label="Feed mode"
-    >
-      <button
-        type="button"
-        onClick={() => switchMode(false)}
-        aria-pressed={!popular}
-        className={`px-4 py-2 text-xs font-medium ${popular ? "text-white" : "bg-white text-black"}`}
-      >
-        Random
-      </button>
-      <button
-        type="button"
-        onClick={() => switchMode(true)}
-        aria-pressed={popular}
-        className={`px-4 py-2 text-xs font-medium ${popular ? "bg-white text-black" : "text-white"}`}
-      >
-        Popular
-      </button>
-    </div>
-  )
-
   if (!items.length) {
     return (
       <main className="h-[100dvh] bg-black text-white flex flex-col items-center justify-center gap-3">
-        {modeToggle}
+        <ModeToggle popular={popular} onSwitch={switchMode} />
         {error ? (
           <>
             <p className="text-sm text-neutral-400">{error}</p>
-            <button
-              type="button"
-              onClick={retry}
-              className="rounded-full bg-white/10 px-4 py-2 text-sm text-white border border-white/20"
-            >
+            <PillButton onClick={retry} className="px-4 py-2 text-sm">
               Tap to retry
-            </button>
+            </PillButton>
           </>
         ) : (
           <LoadingGirl label="Loading your first sauce…" />
@@ -77,16 +48,15 @@ export default function SauceFeed() {
 
   return (
     <div className="relative bg-black">
-      {modeToggle}
+      <ModeToggle popular={popular} onSwitch={switchMode} />
       {/* global blur switch, fixed so it survives scrolling */}
-      <button
-        type="button"
+      <PillButton
         onClick={toggleBlur}
         aria-pressed={!blurred}
-        className="fixed left-3 bottom-24 z-20 rounded-full bg-white/10 backdrop-blur px-3 py-2 text-xs text-white border border-white/20"
+        className="fixed left-3 bottom-24 z-20 backdrop-blur px-3 py-2 text-xs"
       >
         {blurred ? "Blur: ON" : "Blur: OFF"}
-      </button>
+      </PillButton>
 
       {/* waiting animation while the next batch is being generated,
           centered on the page */}
