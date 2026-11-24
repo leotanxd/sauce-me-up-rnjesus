@@ -1,0 +1,119 @@
+import { act, render, waitFor } from "@testing-library/react"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import type { Sauce } from "../types"
+import { IntersectionObserverStub } from "../test/setup"
+
+vi.mock("../lib/api", () => ({
+  fetchNextSauce: vi.fn(),
+  fetchSauceBatch: vi.fn(),
+  fetchSaucePages: vi.fn(),
+}))
+
+import { fetchSauceBatch } from "../lib/api"
+import { useSauceFeed } from "./useSauceFeed"
+
+const mockBatch = vi.mocked(fetchSauceBatch)
+
+const sauce = (id: number): Sauce => ({
+  id,
+  title: `Sauce ${id}`,
+  url: `https://nhentai.net/g/${id}/`,
+  firstImageUrl: `https://img.example/${id}.jpg`,
+  pageCount: 5,
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+let hook!: ReturnType<typeof useSauceFeed>
+
+function Harness() {
+  hook = useSauceFeed()
+  return (
+    <main ref={hook.feedRef}>
+      <div ref={hook.sentinelRef} />
+    </main>
+  )
+}
+
+beforeEach(() => {
+  vi.resetAllMocks()
+  IntersectionObserverStub.reset()
+})
+
+describe("useSauceFeed", () => {
+  it("populates items from the initial load", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+    expect(hook.items.map((s) => s.id)).toEqual([1, 2, 3])
+    expect(hook.error).toBeNull()
+  })
+
+  it("retries when a batch is all already-seen, without duplicating", async () => {
+    mockBatch.mockResolvedValueOnce([sauce(1), sauce(2), sauce(3)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+
+    // Top-up: first attempt returns only seen IDs, the retry is fresh.
+    mockBatch
+      .mockResolvedValueOnce([sauce(1), sauce(2), sauce(3)])
+      .mockResolvedValueOnce([sauce(4), sauce(5)])
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+
+    await waitFor(() => expect(hook.items).toHaveLength(5))
+    expect(hook.items.map((s) => s.id)).toEqual([1, 2, 3, 4, 5])
+    expect(mockBatch).toHaveBeenCalledTimes(3)
+  })
+
+  it("discards a stale load that resolves after a mode switch", async () => {
+    mockBatch.mockResolvedValueOnce([sauce(1)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(1))
+
+    const popularLoad = deferred<Sauce[]>()
+    mockBatch.mockReturnValueOnce(popularLoad.promise)
+    act(() => hook.switchMode(true))
+    expect(hook.popular).toBe(true)
+
+    const randomLoad = deferred<Sauce[]>()
+    mockBatch.mockReturnValueOnce(randomLoad.promise)
+    act(() => hook.switchMode(false))
+    expect(hook.popular).toBe(false)
+
+    // The in-flight popular load resolves late — it must be discarded.
+    await act(async () => {
+      popularLoad.resolve([sauce(50), sauce(51)])
+    })
+    expect(hook.items).toHaveLength(0)
+
+    await act(async () => {
+      randomLoad.resolve([sauce(7), sauce(8)])
+    })
+    expect(hook.items.map((s) => s.id)).toEqual([7, 8])
+  })
+
+  it("sets an error on failure and retry() recovers", async () => {
+    mockBatch.mockRejectedValueOnce(new Error("backend down"))
+    render(<Harness />)
+    await waitFor(() => expect(hook.error).not.toBeNull())
+    expect(hook.items).toHaveLength(0)
+
+    mockBatch.mockResolvedValueOnce([sauce(9)])
+    act(() => hook.retry())
+    await waitFor(() => expect(hook.items).toHaveLength(1))
+    expect(hook.items[0].id).toBe(9)
+    expect(hook.error).toBeNull()
+  })
+})
