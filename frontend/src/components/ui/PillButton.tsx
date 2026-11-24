@@ -7,6 +7,12 @@ import type { ButtonHTMLAttributes, ReactNode } from "react"
 export const PILL_BASE =
   "rounded-full bg-white/10 text-white border border-white/20"
 
+/** Large labelled-pill sizing (UX pass): ~58px tall at text-base, so
+ * every labelled control clears the 48px thumb minimum. The base
+ * stays size-free — call sites compose this plus their own extras
+ * (backdrop-blur, font-medium, positioning). */
+export const PILL_LG = "px-6 py-4 text-base"
+
 type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
   children: ReactNode
   className?: string

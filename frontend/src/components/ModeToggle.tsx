@@ -16,7 +16,7 @@ export default function ModeToggle({ popular, onSwitch }: Props) {
         type="button"
         onClick={() => onSwitch(false)}
         aria-pressed={!popular}
-        className={`px-4 py-2 text-xs font-medium ${popular ? "text-white" : "bg-white text-black"}`}
+        className={`px-7 py-4 text-base font-medium ${popular ? "text-white" : "bg-white text-black"}`}
       >
         Random
       </button>
@@ -24,7 +24,7 @@ export default function ModeToggle({ popular, onSwitch }: Props) {
         type="button"
         onClick={() => onSwitch(true)}
         aria-pressed={popular}
-        className={`px-4 py-2 text-xs font-medium ${popular ? "bg-white text-black" : "text-white"}`}
+        className={`px-7 py-4 text-base font-medium ${popular ? "bg-white text-black" : "text-white"}`}
       >
         Popular
       </button>

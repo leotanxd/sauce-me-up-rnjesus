@@ -1,7 +1,7 @@
 import SauceCard from "./SauceCard"
 import LoadingGirl from "./LoadingGirl"
 import ModeToggle from "./ModeToggle"
-import PillButton from "./ui/PillButton"
+import PillButton, { PILL_LG } from "./ui/PillButton"
 import { useSauceFeed } from "../hooks/useSauceFeed"
 
 /**
@@ -33,15 +33,20 @@ export default function SauceFeed() {
         {error ? (
           <>
             <p className="text-sm text-neutral-400">{error}</p>
-            <PillButton onClick={retry} className="px-4 py-2 text-sm">
+            <PillButton onClick={retry} className="px-8 py-4 text-base">
               Tap to retry
             </PillButton>
           </>
         ) : (
           <LoadingGirl label="Loading your first sauce…" />
         )}
-        <label className="text-xs text-neutral-500 flex items-center gap-2">
-          <input type="checkbox" checked={blurred} onChange={(e) => setBlurred(e.target.checked)} />
+        <label className="text-sm text-neutral-500 flex items-center gap-2 py-3">
+          <input
+            type="checkbox"
+            className="h-6 w-6"
+            checked={blurred}
+            onChange={(e) => setBlurred(e.target.checked)}
+          />
           Blur images
         </label>
       </main>
@@ -55,7 +60,7 @@ export default function SauceFeed() {
       <PillButton
         onClick={toggleBlur}
         aria-pressed={!blurred}
-        className="fixed left-3 bottom-24 z-20 backdrop-blur px-3 py-2 text-xs"
+        className={`fixed left-3 bottom-24 z-20 backdrop-blur ${PILL_LG}`}
       >
         {blurred ? "Blur: ON" : "Blur: OFF"}
       </PillButton>
@@ -72,12 +77,12 @@ export default function SauceFeed() {
           was invisible (the error only rendered on the empty screen) */}
       {error && !loadingMore && (
         <div className="fixed bottom-3 inset-x-0 z-20 flex justify-center">
-          <div className="flex items-center gap-3 rounded-full bg-white/10 backdrop-blur px-4 py-2 border border-white/20">
+          <div className="flex items-center gap-3 rounded-full bg-white/10 backdrop-blur px-2 py-1 border border-white/20">
             <p className="text-xs text-white">{error}</p>
             <button
               type="button"
               onClick={retry}
-              className="text-xs font-medium text-white underline underline-offset-2"
+              className="min-h-12 px-5 py-3 text-sm font-medium text-white underline underline-offset-2"
             >
               Retry
             </button>
