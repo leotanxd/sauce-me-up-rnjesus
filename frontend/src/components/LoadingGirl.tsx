@@ -1,5 +1,3 @@
-import { LOADING_GIRL_POSTER } from "../assets/loadingGirlPoster"
-
 interface LoadingGirlProps {
   label: string
   small?: boolean
@@ -12,16 +10,17 @@ interface LoadingGirlProps {
  *
  * The video is a static asset (frontend/public/loading-girl-v1.mp4,
  * served at /loading-girl-v1.mp4) — the browser fetches and caches it
- * independently of the JS bundle, and the poster frame shows instantly
- * while it streams in. (It used to be ~550 KB of base64 inside the JS;
- * bump the -v1 filename if the animation is ever replaced.)
+ * independently of the JS bundle, and the poster frame (likewise a
+ * static asset, frontend/public/loading-girl-poster.jpg) shows
+ * instantly while it streams in. (Both used to be base64 inside the
+ * JS; bump the filename if either is ever replaced.)
  */
 export default function LoadingGirl({ label, small = false }: LoadingGirlProps) {
   return (
     <div className="flex flex-col items-center gap-2" role="status" aria-label={label}>
       <video
         src="/loading-girl-v1.mp4"
-        poster={LOADING_GIRL_POSTER}
+        poster="/loading-girl-poster.jpg"
         autoPlay
         loop
         muted
