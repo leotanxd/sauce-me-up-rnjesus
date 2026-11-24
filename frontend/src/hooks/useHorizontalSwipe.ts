@@ -30,10 +30,14 @@ type Gesture = {
  * or locks vertical here and is abandoned, never half-applied —
  * while horizontal movement streams to this hook.
  *
- * Gesture state lives in refs (no re-renders). A completed swipe
- * sets suppressClickRef so the click the browser fires on release
- * doesn't also toggle blur; the consumer reads + clears the flag in
- * its onClick. A plain tap never sets it.
+ * Gesture state lives in refs (no re-renders). Any gesture that
+ * travels past the lock slop sets suppressClickRef on release, so
+ * the click the browser fires on pointerup doesn't also toggle
+ * blur — whether the gesture completed a swipe or was just a drag
+ * that went nowhere. The consumer reads + clears the flag in its
+ * onClick. A plain tap (within the slop) never sets it, and
+ * pointercancel never does (no click follows a browser takeover,
+ * and a stale flag would eat the next genuine tap).
  */
 export function useHorizontalSwipe({ enabled, onSwipe }: Options) {
   const gestureRef = useRef<Gesture | null>(null)
@@ -88,10 +92,16 @@ export function useHorizontalSwipe({ enabled, onSwipe }: Options) {
     const g = gestureRef.current
     if (!g || e.pointerId !== g.pointerId) return
     gestureRef.current = null
-    if (g.axis !== "horizontal") return
     const dx = e.clientX - g.startX
-    if (Math.abs(dx) < SWIPE_THRESHOLD_PX) return // tap or wobble
-    suppressClickRef.current = true
+    const dy = e.clientY - g.startY
+    // Travel past the slop in ANY direction means the release click
+    // is the tail of a drag, not a tap — suppress it. This subsumes
+    // the completed-swipe case (56px horizontal > 10px slop).
+    if (Math.max(Math.abs(dx), Math.abs(dy)) > DIRECTION_LOCK_PX) {
+      suppressClickRef.current = true
+    }
+    if (g.axis !== "horizontal") return
+    if (Math.abs(dx) < SWIPE_THRESHOLD_PX) return // drag, not a page turn
     onSwipe(dx < 0 ? 1 : -1)
   }
 

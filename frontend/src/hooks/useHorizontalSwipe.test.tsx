@@ -63,18 +63,41 @@ describe("useHorizontalSwipe", () => {
     expect(suppressClickRef.current).toBe(true)
   })
 
-  it("fires nothing and does not suppress the click for a 30px movement", () => {
+  it("fires nothing but suppresses the click for a 30px drag (past slop, below threshold)", () => {
     const onSwipe = vi.fn()
     render(<Harness onSwipe={onSwipe} />)
     swipeGesture(screen.getByTestId("surface"), { x: 200, y: 100 }, { x: 170, y: 101 })
     expect(onSwipe).not.toHaveBeenCalled()
-    expect(suppressClickRef.current).toBe(false)
+    expect(suppressClickRef.current).toBe(true)
   })
 
-  it("fires nothing for a vertical-dominant gesture", () => {
+  it("fires nothing but suppresses the click for a vertical-dominant drag past the slop", () => {
     const onSwipe = vi.fn()
     render(<Harness onSwipe={onSwipe} />)
     swipeGesture(screen.getByTestId("surface"), { x: 200, y: 100 }, { x: 205, y: 220 })
+    expect(onSwipe).not.toHaveBeenCalled()
+    // The flag is consumed read + clear by the tap layer's onClick:
+    // it reports true exactly once, then false.
+    expect(suppressClickRef.current).toBe(true)
+    suppressClickRef.current = false
+    expect(suppressClickRef.current).toBe(false)
+  })
+
+  it("does not suppress the click for a tap that wobbles within the slop", () => {
+    const onSwipe = vi.fn()
+    render(<Harness onSwipe={onSwipe} />)
+    swipeGesture(screen.getByTestId("surface"), { x: 200, y: 100 }, { x: 204, y: 103 })
+    expect(onSwipe).not.toHaveBeenCalled()
+    expect(suppressClickRef.current).toBe(false)
+  })
+
+  it("does not suppress the click when movement ends in pointercancel", () => {
+    const onSwipe = vi.fn()
+    render(<Harness onSwipe={onSwipe} />)
+    const el = screen.getByTestId("surface")
+    fireEvent.pointerDown(el, { ...pointer, clientX: 200, clientY: 100 })
+    fireEvent.pointerMove(el, { ...pointer, clientX: 195, clientY: 160 })
+    fireEvent.pointerCancel(el, { ...pointer, clientX: 195, clientY: 180 })
     expect(onSwipe).not.toHaveBeenCalled()
     expect(suppressClickRef.current).toBe(false)
   })
