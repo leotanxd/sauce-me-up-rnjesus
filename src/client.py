@@ -5,10 +5,10 @@ URLs), and SearchPool (per-mode result pools), and returns typed
 models (models.py) parsed once at the boundary.
 """
 
-from cdn import MediaUrlBuilder
-from http_client import JsonHttpClient
-from models import GalleryDetail, GallerySummary
-from pools import FeedMode, SearchPool
+from src.cdn import MediaUrlBuilder
+from src.http_client import JsonHttpClient
+from src.models import GalleryDetail, GallerySummary
+from src.pools import FeedMode, SearchPool
 
 GALLERY_DETAIL_URL_TEMPLATE = "https://nhentai.net/api/v2/galleries/{gallery_id}"
 PUBLIC_GALLERY_URL_TEMPLATE = "https://nhentai.net/g/{gallery_id}/"

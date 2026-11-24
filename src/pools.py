@@ -16,8 +16,8 @@ import threading
 from enum import StrEnum
 from urllib.parse import urlencode
 
-from http_client import JsonHttpClient
-from models import GallerySummary
+from src.http_client import JsonHttpClient
+from src.models import GallerySummary
 
 SEARCH_URL = "https://nhentai.net/api/v2/search"
 

@@ -15,6 +15,7 @@ live in their own modules:
 
 Run:
     pip install -r backend/requirements.txt
+    (installs this repo as a package — see pyproject.toml)
     uvicorn backend.api:app --reload --port 8000
 
 Endpoints:
@@ -30,24 +31,20 @@ Endpoints:
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# Make the src/ modules importable without changing the repo layout.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from src.client import NhentaiClient
 
-from client import NhentaiClient  # noqa: E402
-
-from .config import Settings  # noqa: E402
-from .middleware import CacheHeadersMiddleware  # noqa: E402
-from .picker import SaucePicker  # noqa: E402
-from .routers.meta import create_meta_router  # noqa: E402
-from .routers.sauce import create_sauce_router  # noqa: E402
-from .stores import DetailCache, RecentServedStore  # noqa: E402
+from .config import Settings
+from .middleware import CacheHeadersMiddleware
+from .picker import SaucePicker
+from .routers.meta import create_meta_router
+from .routers.sauce import create_sauce_router
+from .stores import DetailCache, RecentServedStore
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

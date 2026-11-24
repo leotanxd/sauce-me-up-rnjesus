@@ -13,8 +13,8 @@ This module re-exports the old names so existing imports keep working.
 
 import webbrowser
 
-from client import NhentaiClient
-from errors import ResourceNotFoundError
+from src.client import NhentaiClient
+from src.errors import ResourceNotFoundError
 
 __all__ = ["SauceGenerator", "ResourceNotFoundError"]
 
@@ -33,6 +33,6 @@ class SauceGenerator(NhentaiClient):
         self.browser = browser if browser is not None else webbrowser
 
     def open(self) -> None:
-        from cli import open_gallery
+        from src.cli import open_gallery
 
         open_gallery(self, self.browser)

@@ -14,9 +14,9 @@ import time
 
 from fastapi import HTTPException
 
-from errors import ResourceNotFoundError
-from models import GalleryDetail
-from pools import FeedMode
+from src.errors import ResourceNotFoundError
+from src.models import GalleryDetail
+from src.pools import FeedMode
 
 from .config import Settings
 from .schemas import BatchOut, PagesOut, SauceOut

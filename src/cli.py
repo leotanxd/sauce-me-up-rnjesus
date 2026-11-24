@@ -6,7 +6,7 @@ uses client.NhentaiClient directly.
 
 import webbrowser
 
-from client import NhentaiClient
+from src.client import NhentaiClient
 
 
 def open_gallery(client: NhentaiClient, browser) -> None:

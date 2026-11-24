@@ -14,7 +14,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from errors import ResourceNotFoundError
+from src.errors import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,8 @@ class JsonHttpClient:
                 with urlopen(request, timeout=timeout) as response:
                     # Non-200 statuses raise HTTPError via urlopen, so a
                     # response here is a success.
-                    return json.loads(response.read().decode("utf-8"))
+                    payload = json.loads(response.read().decode("utf-8"))
+                    return payload
 
             except HTTPError as error:
                 status_code = error.code

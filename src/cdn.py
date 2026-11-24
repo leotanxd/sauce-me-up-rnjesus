@@ -10,7 +10,7 @@ live on the image servers. The CDN config is fetched once and cached.
 import random
 import threading
 
-from http_client import JsonHttpClient
+from src.http_client import JsonHttpClient
 
 CDN_URL = "https://nhentai.net/api/v2/cdn"
 

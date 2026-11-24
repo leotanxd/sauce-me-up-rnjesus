@@ -52,7 +52,7 @@ See [DEPLOY.md](DEPLOY.md) for the one-service Docker/Render deploy,
 or run it locally:
 
 ```bash
-pip install -r backend/requirements.txt
+pip install -r backend/requirements.txt   # installs this repo as a package (see pyproject.toml)
 uvicorn backend.api:app --port 8000        # API (+ built frontend, if present)
 
 cd frontend && npm install && npm run dev  # dev UI at localhost:5173
