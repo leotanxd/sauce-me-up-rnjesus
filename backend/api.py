@@ -10,6 +10,7 @@ live in their own modules:
     backend/picker.py          SaucePicker (pick orchestration)
     backend/routers/sauce.py   /api/sauce/* routes (thin)
     backend/routers/meta.py    /api/health + JSON-404 catch-all
+    backend/middleware.py      CacheHeadersMiddleware (cache policy)
     src/client.py              NhentaiClient (upstream facade)
 
 Run:
@@ -42,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from client import NhentaiClient  # noqa: E402
 
 from .config import Settings  # noqa: E402
+from .middleware import CacheHeadersMiddleware  # noqa: E402
 from .picker import SaucePicker  # noqa: E402
 from .routers.meta import create_meta_router  # noqa: E402
 from .routers.sauce import create_sauce_router  # noqa: E402
@@ -70,6 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET"],
         allow_headers=["*"],
     )
+    app.add_middleware(CacheHeadersMiddleware)
 
     # Real API routes first; the meta router's /api/{path} catch-all
     # (JSON 404) must be registered after them.
