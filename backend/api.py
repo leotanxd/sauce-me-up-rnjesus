@@ -1,4 +1,16 @@
-"""HTTP API wrapper around the upstream client in src/client.py.
+"""HTTP API for Sauce Me Up, RNJesus — composition root.
+
+This module only wires things together: settings, the upstream
+client, the state stores, and the picker service go into create_app(),
+which builds the FastAPI app and includes the routers. The pieces
+live in their own modules:
+
+    backend/config.py          Settings (all tunables, one home)
+    backend/stores.py          RecentServedStore, DetailCache
+    backend/picker.py          SaucePicker (pick orchestration)
+    backend/routers/sauce.py   /api/sauce/* routes (thin)
+    backend/routers/meta.py    /api/health + JSON-404 catch-all
+    src/client.py              NhentaiClient (upstream facade)
 
 Run:
     pip install -r backend/requirements.txt
@@ -12,280 +24,72 @@ Endpoints:
     (currently very popular) instead of the whole-catalogue random feed.
     GET /api/sauce/{id}/pages -> ALL page image URLs for one gallery,
                                  in order (explicit in-sauce browsing)
-
-Design rule (from the frontend spec): the FEED only ever receives the
-first retrieval item — the first page image of each gallery. The full
-page list is available only through /pages, which the frontend calls
-on demand when the user pages through a sauce with the arrow keys.
 """
 
 from __future__ import annotations
 
-import logging
 import sys
-import threading
-import time
-from collections import deque
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# Make the existing backend importable without changing its layout.
+# Make the src/ modules importable without changing the repo layout.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from client import NhentaiClient  # noqa: E402
-from errors import ResourceNotFoundError  # noqa: E402
-from models import GalleryDetail  # noqa: E402
 
-logger = logging.getLogger(__name__)
-
-# Client-facing failure text. Internal exception details go to the
-# server log, never into API responses.
-_UPSTREAM_502 = "Upstream request failed. Please retry."
-
-app = FastAPI(title="Sauce Me Up, RNJesus — API", version="0.1.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET"],
-    allow_headers=["*"],
-)
-
-_generator = NhentaiClient()
+from .config import Settings  # noqa: E402
+from .picker import SaucePicker  # noqa: E402
+from .routers.meta import create_meta_router  # noqa: E402
+from .routers.sauce import create_sauce_router  # noqa: E402
+from .stores import DetailCache, RecentServedStore  # noqa: E402
 
 
-# --- No-repeat memory ------------------------------------------------------
-# IDs served recently by this process. New picks skip these, so a batch
-# never contains duplicates and a refresh shows different sauces. The
-# window is bounded; very old IDs become eligible again eventually.
-# _pick_lock makes the whole pick -> verify -> remember sequence atomic:
-# FastAPI runs these sync endpoints in a threadpool, so without it two
-# concurrent requests could pass the "not served yet" check together.
-_RECENT_MAX = 300
-_recent_ids: deque = deque(maxlen=_RECENT_MAX)
-_recent_set: set = set()
-_pick_lock = threading.Lock()
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Build the app with fresh stores and a fresh upstream client."""
+    settings = settings if settings is not None else Settings()
 
-# Wall-clock budgets so a request can never hang for minutes through
-# the retry/re-roll chain: one pick gets ~20s, a whole batch ~45s.
-_PICK_BUDGET_SECONDS = 20.0
-_BATCH_BUDGET_SECONDS = 45.0
-
-# Short-lived gallery-detail cache: /next fetches a detail, and /pages
-# for the same gallery usually follows seconds later — don't pay the
-# upstream detail call twice. Bounded and TTL'd; details don't change.
-_DETAIL_TTL_SECONDS = 300.0
-_DETAIL_CACHE_MAX = 128
-_detail_cache: dict = {}
-_detail_lock = threading.Lock()
-
-
-def _get_detail(gallery_id: int, deadline: float | None = None) -> GalleryDetail:
-    now = time.monotonic()
-    with _detail_lock:
-        hit = _detail_cache.get(gallery_id)
-        if hit and now - hit[0] < _DETAIL_TTL_SECONDS:
-            return hit[1]
-    detail = _generator.get_gallery_details(gallery_id, deadline=deadline)
-    with _detail_lock:
-        if len(_detail_cache) >= _DETAIL_CACHE_MAX:
-            _detail_cache.clear()
-        _detail_cache[gallery_id] = (now, detail)
-    return detail
-
-
-def _remember_served(gallery_id: int) -> None:
-    if gallery_id in _recent_set:
-        return
-    if len(_recent_ids) >= _RECENT_MAX:
-        _recent_set.discard(_recent_ids[0])
-    _recent_ids.append(gallery_id)
-    _recent_set.add(gallery_id)
-
-
-def _next_sauce(deadline: float | None = None, popular: bool = False) -> dict:
-    # The search already filters language:english; still, verify each pick
-    # against its detail tags and re-roll a non-English result, so what the
-    # API returns — and the frontend displays — is English sauce. Picks
-    # also skip anything served recently, so sauces never repeat within a
-    # batch or across refreshes (while this process keeps its memory).
-    # The whole sequence runs under _pick_lock so it is atomic, and it
-    # gives up at the deadline instead of hanging through endless retries.
-    if deadline is None:
-        deadline = time.monotonic() + _PICK_BUDGET_SECONDS
-
-    with _pick_lock:
-        for _attempt in range(8):
-            if time.monotonic() > deadline:
-                break
-            try:
-                gallery = _generator.get_random_english_gallery(
-                    deadline=deadline, popular=popular
-                )
-                gallery_id = gallery.id
-            except Exception as error:  # upstream failure / bad payload
-                logger.warning("Pick failed: %s", error)
-                raise HTTPException(status_code=502, detail=_UPSTREAM_502) from error
-
-            if gallery_id in _recent_set:
-                continue  # already served recently — pick another gallery
-
-            detail = GalleryDetail.empty(gallery_id)
-            try:
-                detail = _get_detail(gallery_id, deadline=deadline)
-            except Exception:
-                # Details are optional; the search result may suffice.
-                # Accepted on the search filter alone — visible in logs
-                # so silent degradation doesn't go unnoticed.
-                logger.warning(
-                    "Serving gallery %s without detail verification.", gallery_id
-                )
-
-            if detail.is_english is False:
-                continue  # not English — pick another gallery
-
-            first_path = detail.first_media_path(gallery)
-            first_image_url: str | None = None
-            if first_path:
-                if first_path.startswith("http://") or first_path.startswith("https://"):
-                    first_image_url = first_path
-                else:
-                    try:
-                        first_image_url = _generator.build_media_url(
-                            first_path, deadline=deadline
-                        )
-                    except Exception:
-                        first_image_url = None
-
-            _remember_served(gallery_id)
-            return {
-                "id": gallery_id,
-                # Title priority lives on the models: search
-                # english_title, then detail title.english, then
-                # title.pretty (last resort), then "Untitled".
-                "title": detail.display_title(gallery),
-                "url": _generator.build_gallery_url(gallery),
-                # ONLY the first retrieval item. Do not add pages[] here.
-                "firstImageUrl": first_image_url,
-                # Total page count comes free from the detail already
-                # fetched for verification — the feed shows
-                # "Page 1 of N" without page URLs ever leaving /pages.
-                "pageCount": detail.page_count,
-            }
-
-    raise HTTPException(
-        status_code=502,
-        detail="Could not find a new English-language gallery in time. Please retry.",
+    client = NhentaiClient()
+    picker = SaucePicker(
+        client=client,
+        recent=RecentServedStore(maxlen=settings.recent_max),
+        details=DetailCache(
+            ttl_seconds=settings.detail_ttl_seconds,
+            max_entries=settings.detail_cache_max,
+        ),
+        settings=settings,
     )
 
-
-@app.get("/api/health")
-def health() -> dict:
-    return {"status": "ok"}
-
-
-@app.get("/api/sauce/next")
-def sauce_next(popular: bool = Query(default=False)) -> dict:
-    # popular=true draws from the API's popular-week sort (currently
-    # very popular); the default is the whole-catalogue random feed.
-    return _next_sauce(popular=popular)
-
-
-@app.get("/api/sauce/batch")
-def sauce_batch(
-    n: int = Query(default=3, ge=1, le=10),
-    popular: bool = Query(default=False),
-) -> dict:
-    # One overall deadline for the batch: return what was generated in
-    # time rather than hanging. (The default n mirrors the frontend's
-    # BATCH_SIZE in frontend/src/lib/api.ts — keep them in step.)
-    deadline = time.monotonic() + _BATCH_BUDGET_SECONDS
-    items, errors = [], 0
-    for _ in range(n):
-        if time.monotonic() > deadline:
-            errors += 1
-            break
-        try:
-            items.append(_next_sauce(deadline=deadline, popular=popular))
-        except HTTPException:
-            errors += 1
-    if not items:
-        raise HTTPException(status_code=502, detail="Upstream returned no galleries.")
-    return {"items": items, "errors": errors}
-
-
-@app.get("/api/sauce/{gallery_id}/pages")
-def sauce_pages(gallery_id: int) -> dict:
-    """All page image URLs for one gallery, in page order.
-
-    The feed itself only ever receives the first page (see /next and
-    /batch). This endpoint exists for explicit in-sauce browsing: the
-    frontend calls it only when the user starts paging through a sauce
-    with the arrow keys / on-screen arrows. URLs are built exactly as
-    the API v2 docs prescribe: a CDN image server + the page's path,
-    used verbatim.
-    """
-    deadline = time.monotonic() + _PICK_BUDGET_SECONDS
-    try:
-        detail = _get_detail(gallery_id, deadline=deadline)
-    except ResourceNotFoundError as error:
-        raise HTTPException(status_code=404, detail="Gallery not found.") from error
-    except Exception as error:
-        logger.warning("Detail fetch for %s failed: %s", gallery_id, error)
-        raise HTTPException(status_code=502, detail=_UPSTREAM_502) from error
-
-    # Page paths arrive pre-sorted from the model (by page number,
-    # number-less pages last) — the one ordering definition in models.py.
-    urls: list[str] = []
-    for path in detail.page_paths:
-        try:
-            urls.append(_generator.build_media_url(path, deadline=deadline))
-        except Exception as error:
-            # All-or-nothing: a silently dropped middle page would
-            # shift every later "Page X of Y" label off the truth.
-            logger.warning(
-                "Page URL build failed for gallery %s: %s", gallery_id, error
-            )
-            raise HTTPException(
-                status_code=502, detail=_UPSTREAM_502
-            ) from error
-
-    if not urls:
-        # Fallback: at least the first page/cover, same as the feed gets.
-        first_path = detail.first_media_path()
-        if first_path:
-            try:
-                urls.append(_generator.build_media_url(first_path, deadline=deadline))
-            except Exception:
-                pass
-    if not urls:
-        raise HTTPException(status_code=502, detail="No page images available.")
-    return {"id": gallery_id, "count": len(urls), "images": urls}
-
-
-# Any /api/* path that matched no route above is a client bug — answer
-# with a JSON 404 instead of the SPA's index.html (which the static
-# mount below would otherwise serve with a misleading 200).
-@app.api_route(
-    "/api/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-)
-def api_not_found(path: str) -> dict:
-    raise HTTPException(status_code=404, detail="Not found.")
-
-
-# --- Single-service deployment (Render / Docker) -------------------------
-# If the frontend has been built (frontend/dist exists, as in the Docker
-# image), serve it from this same app so ONE service = ONE public URL.
-# The /api routes above are registered first and take precedence.
-# In local dev without a build, this is skipped and Vite serves the UI.
-_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-if _FRONTEND_DIST.is_dir():
-    app.mount(
-        "/",
-        StaticFiles(directory=_FRONTEND_DIST, html=True),
-        name="frontend",
+    app = FastAPI(title="Sauce Me Up, RNJesus — API", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.cors_origins),
+        allow_methods=["GET"],
+        allow_headers=["*"],
     )
+
+    # Real API routes first; the meta router's /api/{path} catch-all
+    # (JSON 404) must be registered after them.
+    app.include_router(create_sauce_router(picker))
+    app.include_router(create_meta_router())
+
+    # --- Single-service deployment (Render / Docker) -----------------
+    # If the frontend has been built (frontend/dist exists, as in the
+    # Docker image), serve it from this same app so ONE service = ONE
+    # public URL. The /api routes above are registered first and take
+    # precedence. In local dev without a build, this is skipped and
+    # Vite serves the UI.
+    frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    if frontend_dist.is_dir():
+        app.mount(
+            "/",
+            StaticFiles(directory=frontend_dist, html=True),
+            name="frontend",
+        )
+
+    return app
+
+
+app = create_app()
