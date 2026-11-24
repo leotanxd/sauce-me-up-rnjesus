@@ -87,9 +87,10 @@ export default function SauceFeed() {
         {blurred ? "Blur: ON" : "Blur: OFF"}
       </button>
 
-      {/* waiting animation while the next batch is being generated */}
+      {/* waiting animation while the next batch is being generated,
+          centered on the page */}
       {loadingMore && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+        <div className="fixed inset-0 z-20 flex items-center justify-center pointer-events-none">
           <LoadingGirl small label="Generating more sauce…" />
         </div>
       )}
