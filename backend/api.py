@@ -17,6 +17,7 @@ No other pages, and no full gallery payload, leave this API.
 from __future__ import annotations
 
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,24 @@ def _first_media_path(detail: dict, gallery: dict) -> str | None:
     return None
 
 
+# --- No-repeat memory ------------------------------------------------------
+# IDs served recently by this process. New picks skip these, so a batch
+# never contains duplicates and a refresh shows different sauces. The
+# window is bounded; very old IDs become eligible again eventually.
+_RECENT_MAX = 300
+_recent_ids: deque = deque(maxlen=_RECENT_MAX)
+_recent_set: set = set()
+
+
+def _remember_served(gallery_id: int) -> None:
+    if gallery_id in _recent_set:
+        return
+    if len(_recent_ids) >= _RECENT_MAX:
+        _recent_set.discard(_recent_ids[0])
+    _recent_ids.append(gallery_id)
+    _recent_set.add(gallery_id)
+
+
 def _is_english(detail: dict) -> bool | None:
     """Check the detail's language tags. None = unknown (no tags to check)."""
     tags = detail.get("tags")
@@ -113,13 +132,18 @@ def _is_english(detail: dict) -> bool | None:
 def _next_sauce() -> dict:
     # The search already filters language:english; still, verify each pick
     # against its detail tags and re-roll a non-English result, so what the
-    # API returns — and the frontend displays — is English sauce.
-    for _attempt in range(5):
+    # API returns — and the frontend displays — is English sauce. Picks
+    # also skip anything served recently, so sauces never repeat within a
+    # batch or across refreshes (while this process keeps its memory).
+    for _attempt in range(8):
         try:
             gallery = _generator.get_random_english_gallery()
             gallery_id = int(gallery["id"])
         except Exception as error:  # upstream failure / bad payload
             raise HTTPException(status_code=502, detail=str(error)) from error
+
+        if gallery_id in _recent_set:
+            continue  # already served recently — pick another gallery
 
         detail: dict = {}
         try:
@@ -146,6 +170,7 @@ def _next_sauce() -> dict:
         # detail's title.english. title.pretty is often the Japanese title
         # even for English galleries, so it is only a last resort.
         title_obj = _as_dict(detail.get("title"))
+        _remember_served(gallery_id)
         return {
             "id": gallery_id,
             "title": (
@@ -161,7 +186,7 @@ def _next_sauce() -> dict:
 
     raise HTTPException(
         status_code=502,
-        detail="Could not find an English-language gallery. Please retry.",
+        detail="Could not find a new English-language gallery. Please retry.",
     )
 
 

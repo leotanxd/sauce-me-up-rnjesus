@@ -40,10 +40,11 @@ class SauceGenerator:
         self.order_count = order_count
         self.browser = browser if browser is not None else webbrowser
         self._cdn_data: dict | None = None  # cached GET /api/v2/cdn response
+        self._search_num_pages: int | None = None  # learned from page 1
 
-    def _build_search_url(self) -> str:
+    def _build_search_url(self, page: int = 1) -> str:
         """Build the API search URL for English-language galleries."""
-        query = urlencode({"query": "language:english"})
+        query = urlencode({"query": "language:english", "page": page})
         return f"{SEARCH_URL}?{query}"
 
     def _retry_delay(self, attempt: int) -> float:
@@ -137,9 +138,28 @@ class SauceGenerator:
         raise RuntimeError(f"Could not retrieve data after retries: {last_error}")
 
     def get_random_english_gallery(self) -> dict:
-        """Return one randomly selected English-language gallery."""
-        search_results = self._request_json(self._build_search_url())
-        galleries = search_results.get("result", [])
+        """Return one randomly selected English-language gallery.
+
+        Picks from a RANDOM search page, not just page 1, so repeated
+        calls draw from the whole English catalogue (100k+ galleries)
+        instead of the ~25 newest — every call can return something
+        different. The page count is learned once and cached.
+        """
+        if self._search_num_pages is None:
+            first_page = self._request_json(self._build_search_url(1))
+            num_pages = first_page.get("num_pages")
+            self._search_num_pages = (
+                num_pages if isinstance(num_pages, int) and num_pages > 0 else 1
+            )
+            galleries = first_page.get("result", [])
+        else:
+            page = random.randint(1, self._search_num_pages)
+            search_results = self._request_json(self._build_search_url(page))
+            galleries = search_results.get("result", [])
+            if not isinstance(galleries, list) or not galleries:
+                # Stale/empty page — fall back to page 1.
+                first_page = self._request_json(self._build_search_url(1))
+                galleries = first_page.get("result", [])
 
         if not isinstance(galleries, list) or not galleries:
             raise RuntimeError(
