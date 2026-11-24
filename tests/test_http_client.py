@@ -83,3 +83,15 @@ def test_malformed_json_raises(client, fake_urlopen):
         client.get_json(URL)
 
 
+def test_last_success_at_recorded_on_success_only(client, fake_urlopen):
+    assert client.last_success_at is None
+    fake_urlopen.push_http(404)
+    with pytest.raises(ResourceNotFoundError):
+        client.get_json(URL)
+    assert client.last_success_at is None  # failures don't count
+
+    fake_urlopen.push_json({"ok": True})
+    before = time.time()
+    client.get_json(URL)
+    assert client.last_success_at is not None
+    assert before <= client.last_success_at <= time.time()

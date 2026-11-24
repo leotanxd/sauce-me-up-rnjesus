@@ -2,12 +2,14 @@
 picker (create_app() itself builds a real upstream client, so it is
 only smoke-tested for construction, never called through)."""
 
+import time
+
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from backend.api import create_app
-from backend.routers.meta import create_meta_router
+from backend.routers.meta import build_health, create_meta_router
 from backend.routers.sauce import create_sauce_router
 from backend.schemas import BatchOut, PagesOut, SauceOut
 from src.pools import FeedMode
@@ -113,3 +115,35 @@ def test_create_app_constructs_without_network():
     assert app.title.startswith("Sauce Me Up")
 
 
+def _health_client(last_success_at, fresh_seconds=900.0):
+    app = FastAPI()
+    app.include_router(
+        create_meta_router(lambda: build_health(last_success_at, fresh_seconds))
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_health_unknown_before_any_upstream_success():
+    response = _health_client(None).get("/api/health")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "upstream": {"lastSuccessAt": None, "upstreamStatus": "unknown"},
+    }
+
+
+def test_health_ok_after_a_recent_success():
+    response = _health_client(time.time()).get("/api/health")
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] == "ok"
+    assert body["upstream"]["upstreamStatus"] == "ok"
+    assert body["upstream"]["lastSuccessAt"].endswith("Z")
+
+
+def test_health_stale_after_the_freshness_window_but_still_200():
+    response = _health_client(time.time() - 1000, fresh_seconds=900.0).get(
+        "/api/health"
+    )
+    assert response.status_code == 200  # upstream state is never app death
+    assert response.json()["upstream"]["upstreamStatus"] == "stale"

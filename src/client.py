@@ -40,6 +40,11 @@ class NhentaiClient:
         """
         return self._pool.next(mode=mode, deadline=deadline)
 
+    def upstream_last_success_at(self) -> float | None:
+        """Wall-clock time of the last successful upstream response
+        (any endpoint), or None if none has succeeded yet."""
+        return self._http.last_success_at
+
     def get_gallery_details(
         self, gallery_id: int, deadline: float | None = None
     ) -> GalleryDetail:

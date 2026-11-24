@@ -42,7 +42,7 @@ from src.client import NhentaiClient
 from .config import Settings
 from .middleware import CacheHeadersMiddleware
 from .picker import SaucePicker
-from .routers.meta import create_meta_router
+from .routers.meta import build_health, create_meta_router
 from .routers.sauce import create_sauce_router
 from .stores import DetailCache, RecentServedStore
 
@@ -71,10 +71,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_middleware(CacheHeadersMiddleware)
 
+    def health_provider() -> dict:
+        # Observed upstream contact only — health never probes (a
+        # probe would burn anonymous upstream quota).
+        return build_health(
+            client.upstream_last_success_at(),
+            settings.health_fresh_seconds,
+        )
+
     # Real API routes first; the meta router's /api/{path} catch-all
     # (JSON 404) must be registered after them.
     app.include_router(create_sauce_router(picker))
-    app.include_router(create_meta_router())
+    app.include_router(create_meta_router(health_provider))
 
     # --- Single-service deployment (Render / Docker) -----------------
     # If the frontend has been built (frontend/dist exists, as in the

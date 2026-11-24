@@ -32,6 +32,13 @@ MAX_JITTER_SECONDS = 1
 class JsonHttpClient:
     """GETs JSON documents with retries, backoff, and deadlines."""
 
+    def __init__(self):
+        # Wall-clock time of the last successful upstream response,
+        # or None if none has succeeded yet. Every upstream call goes
+        # through get_json, so this is the process's observed upstream
+        # contact — read by the /api/health endpoint (never probed).
+        self.last_success_at: float | None = None
+
     def _retry_delay(self, attempt: int) -> float:
         """Calculate exponential backoff with random jitter."""
         base_delay = INITIAL_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
@@ -88,6 +95,7 @@ class JsonHttpClient:
                     # Non-200 statuses raise HTTPError via urlopen, so a
                     # response here is a success.
                     payload = json.loads(response.read().decode("utf-8"))
+                    self.last_success_at = time.time()
                     return payload
 
             except HTTPError as error:
