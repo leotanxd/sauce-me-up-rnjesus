@@ -48,6 +48,45 @@ class SaucePicker:
         self._details.put(gallery_id, detail)
         return detail
 
+    def _serve(
+        self, gallery, detail: GalleryDetail, deadline: float | None = None
+    ) -> SauceOut:
+        """Shape one feed item, remember it as served, and return it.
+
+        Shared by the normal verified serve and the last-resort
+        unverified fallback (which passes GalleryDetail.empty).
+        """
+        gallery_id = gallery.id
+        first_path = detail.first_media_path(gallery)
+        first_image_url: str | None = None
+        if first_path:
+            if first_path.startswith(("http://", "https://")):
+                first_image_url = first_path
+            else:
+                try:
+                    first_image_url = self._client.build_media_url(
+                        first_path, deadline=deadline
+                    )
+                except Exception:
+                    first_image_url = None
+
+        self._recent.remember(gallery_id)
+        return SauceOut(
+            id=gallery_id,
+            # Title priority lives on the models: search
+            # english_title, then detail title.english, then
+            # title.pretty (last resort), then "Untitled".
+            title=detail.display_title(gallery),
+            url=self._client.build_gallery_url(gallery),
+            # ONLY the first retrieval item. No pages[] here.
+            first_image_url=first_image_url,
+            # Total page count comes free from the detail
+            # already fetched for verification — the feed
+            # shows "Page 1 of N" without page URLs ever
+            # leaving the /pages endpoint.
+            page_count=detail.page_count,
+        )
+
     def next(
         self, mode: FeedMode = FeedMode.RANDOM, deadline: float | None = None
     ) -> SauceOut:
@@ -59,6 +98,13 @@ class SaucePicker:
         # atomic, and it gives up at the deadline instead of hanging.
         if deadline is None:
             deadline = time.monotonic() + self._settings.pick_budget_seconds
+
+        # A candidate whose detail fetch fails transiently is kept as
+        # a last-resort fallback (see the end of this method): re-roll
+        # for a verified pick first, and only serve unverified if
+        # every attempt fails. A detail 404 is never a fallback — the
+        # gallery effectively doesn't exist upstream.
+        fallback: tuple | None = None
 
         with self._recent.lock:
             for _attempt in range(8):
@@ -78,49 +124,48 @@ class SaucePicker:
                 if gallery_id in self._recent:
                     continue  # already served recently — pick another
 
-                detail = GalleryDetail.empty(gallery_id)
                 try:
                     detail = self._get_detail(gallery_id, deadline=deadline)
-                except Exception:
-                    # Details are optional; the search result may
-                    # suffice. Accepted on the search filter alone —
-                    # visible in logs so silent degradation is noticed.
+                except ResourceNotFoundError:
+                    # Detail 404: not transient, and never served.
                     logger.warning(
-                        "Serving gallery %s without detail verification.",
+                        "Detail for gallery %s returned 404; re-rolling.",
                         gallery_id,
                     )
+                    continue
+                except Exception as error:
+                    # Transient failure (the transport already retried
+                    # this gallery): substitute a different gallery
+                    # instead of serving this one unverified.
+                    logger.warning(
+                        "Detail fetch for gallery %s failed (%s); re-rolling.",
+                        gallery_id,
+                        error,
+                    )
+                    if fallback is None:
+                        fallback = (gallery, gallery_id)
+                    continue
 
                 if detail.is_english is False:
                     continue  # not English — pick another gallery
 
-                first_path = detail.first_media_path(gallery)
-                first_image_url: str | None = None
-                if first_path:
-                    if first_path.startswith(("http://", "https://")):
-                        first_image_url = first_path
-                    else:
-                        try:
-                            first_image_url = self._client.build_media_url(
-                                first_path, deadline=deadline
-                            )
-                        except Exception:
-                            first_image_url = None
+                return self._serve(gallery, detail, deadline=deadline)
 
-                self._recent.remember(gallery_id)
-                return SauceOut(
-                    id=gallery_id,
-                    # Title priority lives on the models: search
-                    # english_title, then detail title.english, then
-                    # title.pretty (last resort), then "Untitled".
-                    title=detail.display_title(gallery),
-                    url=self._client.build_gallery_url(gallery),
-                    # ONLY the first retrieval item. No pages[] here.
-                    first_image_url=first_image_url,
-                    # Total page count comes free from the detail
-                    # already fetched for verification — the feed
-                    # shows "Page 1 of N" without page URLs ever
-                    # leaving the /pages endpoint.
-                    page_count=detail.page_count,
+            if fallback is not None:
+                # Every attempt failed to verify: serve the first
+                # transiently-failed candidate unverified rather than
+                # hard-failing the feed. Accepted on the search filter
+                # alone — visible in logs so silent degradation is
+                # noticed.
+                gallery, gallery_id = fallback
+                logger.warning(
+                    "Serving gallery %s without detail verification.",
+                    gallery_id,
+                )
+                return self._serve(
+                    gallery,
+                    GalleryDetail.empty(gallery_id),
+                    deadline=deadline,
                 )
 
         raise HTTPException(
