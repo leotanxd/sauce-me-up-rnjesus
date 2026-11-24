@@ -11,6 +11,8 @@ settings), so the policy is testable without HTTP.
 
 import logging
 import time
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from fastapi import HTTPException
 
@@ -51,10 +53,12 @@ class SaucePicker:
     def _serve(
         self, gallery, detail: GalleryDetail, deadline: float | None = None
     ) -> SauceOut:
-        """Shape one feed item, remember it as served, and return it.
+        """Shape one feed item and return it.
 
         Shared by the normal verified serve and the last-resort
-        unverified fallback (which passes GalleryDetail.empty).
+        unverified fallback (which passes GalleryDetail.empty). The
+        gallery's ID was remembered at reservation time in next() —
+        this method does no store bookkeeping.
         """
         gallery_id = gallery.id
         first_path = detail.first_media_path(gallery)
@@ -70,7 +74,6 @@ class SaucePicker:
                 except Exception:
                     first_image_url = None
 
-        self._recent.remember(gallery_id)
         return SauceOut(
             id=gallery_id,
             # Title priority lives on the models: search
@@ -94,8 +97,16 @@ class SaucePicker:
         # each pick against its detail tags and re-roll a non-English
         # result, so what the API returns — and the frontend displays —
         # is English sauce. Picks also skip anything served recently.
-        # The whole sequence runs under the store's lock so it is
-        # atomic, and it gives up at the deadline instead of hanging.
+        #
+        # Locking: the only atomic step is check-and-reserve — "not in
+        # the recent set" + remember, in one hold of the store's lock,
+        # so concurrent picks can never reserve the same ID. The draw,
+        # the detail fetch, and the media-URL build all run outside
+        # the lock (the pool, detail cache, and CDN builder lock
+        # themselves). A candidate that earns a verdict (non-English,
+        # detail 404, or the transient-failure fallback) keeps its
+        # reservation; if the pick raises outright, every reservation
+        # it made is released, leaving the window as it found it.
         if deadline is None:
             deadline = time.monotonic() + self._settings.pick_budget_seconds
 
@@ -105,8 +116,9 @@ class SaucePicker:
         # every attempt fails. A detail 404 is never a fallback — the
         # gallery effectively doesn't exist upstream.
         fallback: tuple | None = None
+        reserved: list[int] = []
 
-        with self._recent.lock:
+        try:
             for _attempt in range(8):
                 if time.monotonic() > deadline:
                     break
@@ -121,8 +133,12 @@ class SaucePicker:
                         status_code=502, detail=self._settings.upstream_502_text
                     ) from error
 
-                if gallery_id in self._recent:
-                    continue  # already served recently — pick another
+                # Check-and-reserve: the one atomic unit.
+                with self._recent.lock:
+                    if gallery_id in self._recent:
+                        continue  # served or reserved — pick another
+                    self._recent.remember(gallery_id)
+                    reserved.append(gallery_id)
 
                 try:
                     detail = self._get_detail(gallery_id, deadline=deadline)
@@ -168,26 +184,52 @@ class SaucePicker:
                     deadline=deadline,
                 )
 
-        raise HTTPException(
-            status_code=502,
-            detail="Could not find a new English-language gallery in time. Please retry.",
-        )
+            raise HTTPException(
+                status_code=502,
+                detail="Could not find a new English-language gallery in time. Please retry.",
+            )
+        except HTTPException:
+            # A failed pick remembers nothing: release its reservations.
+            for gallery_id in reserved:
+                self._recent.forget(gallery_id)
+            raise
 
     def batch(self, n: int, mode: FeedMode = FeedMode.RANDOM) -> BatchOut:
         # One overall deadline for the batch: return what was
         # generated in time rather than hanging. (The default n at the
         # route mirrors the frontend's BATCH_SIZE in
         # frontend/src/lib/config.ts — keep them in step.)
+        #
+        # Picks run concurrently (up to Settings.batch_concurrency in
+        # flight) on a per-call executor — no long-lived pool to leak.
+        # Submission is lazy, mirroring the old sequential accounting:
+        # the deadline is checked before each new submission, and a
+        # cut adds one error and stops submitting; results are
+        # collected in submission order, each pick's 502 adding an
+        # error. The shared deadline is passed to every pick.
         deadline = time.monotonic() + self._settings.batch_budget_seconds
-        items, errors = [], 0
-        for _ in range(n):
-            if time.monotonic() > deadline:
-                errors += 1
-                break
-            try:
-                items.append(self.next(deadline=deadline, mode=mode))
-            except HTTPException:
-                errors += 1
+        cap = max(1, self._settings.batch_concurrency)
+        items: list[SauceOut] = []
+        errors = 0
+        with ThreadPoolExecutor(max_workers=cap) as executor:
+            in_flight: deque[Future] = deque()
+            submitted = 0
+            while submitted < n or in_flight:
+                while submitted < n and len(in_flight) < cap:
+                    if time.monotonic() > deadline:
+                        errors += 1
+                        submitted = n  # deadline cut: stop submitting
+                        break
+                    in_flight.append(
+                        executor.submit(self.next, deadline=deadline, mode=mode)
+                    )
+                    submitted += 1
+                if not in_flight:
+                    break
+                try:
+                    items.append(in_flight.popleft().result())
+                except HTTPException:
+                    errors += 1
         if not items:
             raise HTTPException(
                 status_code=502, detail="Upstream returned no galleries."

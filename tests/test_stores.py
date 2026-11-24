@@ -51,6 +51,22 @@ def test_detail_cache_put_at_capacity_clears():
     assert cache.get(3) == "c"
 
 
+def test_forget_releases_a_reservation():
+    store = RecentServedStore()
+    store.remember(1)
+    store.forget(1)
+    assert 1 not in store
+    assert list(store._ids) == []
+    assert store._set == set()
+
+
+def test_forget_of_unknown_id_is_a_noop():
+    store = RecentServedStore()
+    store.remember(1)
+    store.forget(999)
+    assert 1 in store
+
+
 def test_recent_store_threaded_hammer_stays_consistent():
     store = RecentServedStore(maxlen=300)
     errors = []

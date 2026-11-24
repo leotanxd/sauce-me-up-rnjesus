@@ -138,3 +138,65 @@ def test_pages_url_build_failure_is_all_or_nothing_502():
         picker.pages(5)
     assert excinfo.value.status_code == 502
 
+
+# --- Concurrency: check-and-reserve + parallel batches -------------------
+
+
+def test_verdict_candidates_keep_their_reservations():
+    # A transiently-failed candidate is a bad redraw candidate: its
+    # reservation is kept even though another gallery was served.
+    recent = RecentServedStore()
+    client = FakeClient(draws=[1, 2], details={1: TRANSIENT})
+    picker = make_picker(client, recent=recent)
+    assert picker.next().id == 2
+    assert 1 in recent
+    assert 2 in recent
+
+
+def test_parallel_batch_of_ten_is_unique_and_faster_than_sequential():
+    client = FakeClient(draws=list(range(1, 11)), detail_delay=0.25)
+    picker = make_picker(client)
+    started = time.monotonic()
+    result = picker.batch(10)
+    elapsed = time.monotonic() - started
+    assert result.errors == 0
+    assert sorted(item.id for item in result.items) == list(range(1, 11))
+    # Sequential would take >= 10 x 0.25s = 2.5s of detail latency.
+    assert elapsed < 1.5
+
+
+def test_concurrent_batches_never_serve_a_duplicate():
+    recent = RecentServedStore()
+    client = FakeClient(draws=list(range(1, 400)))
+    picker = make_picker(client, recent=recent)
+    served: list[int] = []
+    failures: list[Exception] = []
+
+    def run_batch():
+        try:
+            result = picker.batch(10)
+            served.extend(item.id for item in result.items)
+        except Exception as error:  # pragma: no cover - failure path
+            failures.append(error)
+
+    threads = [threading.Thread(target=run_batch) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert failures == []
+    assert len(served) == 80
+    assert len(set(served)) == 80  # zero duplicates across all batches
+    assert set(recent._ids) == recent._set
+
+
+def test_batch_deadline_cut_submits_nothing():
+    client = FakeClient(draws=[1, 2, 3])
+    picker = make_picker(
+        client, settings=Settings(batch_budget_seconds=0.0)
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        picker.batch(3)
+    assert excinfo.value.status_code == 502
+    assert client.draw_calls == 0
