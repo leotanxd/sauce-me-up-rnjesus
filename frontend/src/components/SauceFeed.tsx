@@ -6,8 +6,8 @@ import { useSauceFeed } from "../hooks/useSauceFeed"
 
 /**
  * The scroll-snap sauce feed. All state and behaviour (loading,
- * dedupe, mode switching, infinite scroll, keyboard nav) lives in
- * useSauceFeed; this component is layout only.
+ * dedupe, mode switching, infinite scroll, keyboard nav, dim mode)
+ * lives in useSauceFeed; this component is layout only.
  */
 export default function SauceFeed() {
   const {
@@ -15,6 +15,8 @@ export default function SauceFeed() {
     blurred,
     setBlurred,
     toggleBlur,
+    dimmed,
+    toggleDim,
     popular,
     switchMode,
     error,
@@ -53,14 +55,36 @@ export default function SauceFeed() {
     )
   }
 
+  // Dim mode: chrome fades out and goes inert (invisible also drops
+  // it from the tab order). The Dim toggle itself is the one exit —
+  // it stays, at reduced opacity while dimmed.
+  const chromeClass = `transition-opacity duration-200 ${
+    dimmed ? "opacity-0 invisible pointer-events-none" : "opacity-100 visible"
+  }`
+
   return (
     <div className="relative bg-black">
-      <ModeToggle popular={popular} onSwitch={switchMode} />
+      <div className={chromeClass}>
+        <ModeToggle popular={popular} onSwitch={switchMode} />
+      </div>
+
+      {/* dim toggle, stacked above the global blur switch; the only
+          control that stays visible (at 40% opacity) while dimmed */}
+      <PillButton
+        onClick={toggleDim}
+        aria-pressed={dimmed}
+        className={`fixed left-3 bottom-44 z-20 backdrop-blur ${PILL_LG} transition-opacity duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${
+          dimmed ? "opacity-40 hover:opacity-100 focus-visible:opacity-100" : ""
+        }`}
+      >
+        {dimmed ? "Dim: ON" : "Dim: OFF"}
+      </PillButton>
+
       {/* global blur switch, fixed so it survives scrolling */}
       <PillButton
         onClick={toggleBlur}
         aria-pressed={!blurred}
-        className={`fixed left-3 bottom-24 z-20 backdrop-blur ${PILL_LG}`}
+        className={`fixed left-3 bottom-24 z-20 backdrop-blur ${PILL_LG} ${chromeClass}`}
       >
         {blurred ? "Blur: ON" : "Blur: OFF"}
       </PillButton>
@@ -74,7 +98,9 @@ export default function SauceFeed() {
       )}
 
       {/* top-up failure notice — without this, a failed load mid-feed
-          was invisible (the error only rendered on the empty screen) */}
+          was invisible (the error only rendered on the empty screen).
+          Deliberately NOT dimmed away: it is a transient, actionable
+          alert, not viewing chrome. */}
       {error && !loadingMore && (
         <div className="fixed bottom-3 inset-x-0 z-20 flex justify-center">
           <div className="flex items-center gap-3 rounded-full bg-white/10 backdrop-blur px-2 py-1 border border-white/20">
@@ -109,6 +135,7 @@ export default function SauceFeed() {
               sauce={sauce}
               blurred={blurred}
               onToggleBlur={toggleBlur}
+              dimmed={dimmed}
             />
           ),
         )}

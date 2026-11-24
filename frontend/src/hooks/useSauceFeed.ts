@@ -16,6 +16,7 @@ import { useIntersectionObserver } from "./useIntersectionObserver"
 export function useSauceFeed() {
   const [items, setItems] = useState<Sauce[]>([])
   const [blurred, setBlurred] = useState(true) // global toggle, on by default
+  const [dimmed, setDimmed] = useState(false) // dim mode: hide all chrome
   const [popular, setPopular] = useState(false) // feed mode: random vs popular
   const [error, setError] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false) // top-up in progress
@@ -98,6 +99,11 @@ export function useSauceFeed() {
 
   const toggleBlur = useCallback(() => setBlurred((b) => !b), [])
 
+  // Dim mode is feed-global like blur, and like blur it is plain
+  // useState — nothing persists across a reload, so reloading is
+  // always a way out. Mode switches deliberately leave it alone.
+  const toggleDim = useCallback(() => setDimmed((d) => !d), [])
+
   useEffect(() => { void loadMore(BATCH_SIZE) }, [loadMore])
 
   // Infinite scroll: when the sentinel (near the end) is visible, top
@@ -127,6 +133,8 @@ export function useSauceFeed() {
     blurred,
     setBlurred,
     toggleBlur,
+    dimmed,
+    toggleDim,
     popular,
     switchMode,
     error,

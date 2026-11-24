@@ -129,6 +129,33 @@ describe("useSauceFeed", () => {
     expect(hook.activeIndex).toBe(0)
   })
 
+  it("dimmed defaults to false and toggleDim flips it both ways", async () => {
+    mockBatch.mockResolvedValue([sauce(1)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(1))
+    expect(hook.dimmed).toBe(false)
+
+    act(() => hook.toggleDim())
+    expect(hook.dimmed).toBe(true)
+
+    act(() => hook.toggleDim())
+    expect(hook.dimmed).toBe(false)
+  })
+
+  it("leaves dimmed as it was across a mode switch", async () => {
+    mockBatch.mockResolvedValue([sauce(1)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(1))
+
+    act(() => hook.toggleDim())
+    expect(hook.dimmed).toBe(true)
+
+    mockBatch.mockResolvedValue([sauce(2)])
+    act(() => hook.switchMode(true))
+    expect(hook.popular).toBe(true)
+    expect(hook.dimmed).toBe(true)
+  })
+
   it("sets an error on failure and retry() recovers", async () => {
     mockBatch.mockRejectedValueOnce(new Error("backend down"))
     render(<Harness />)

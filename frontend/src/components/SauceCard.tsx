@@ -9,6 +9,8 @@ type Props = {
   sauce: Sauce
   blurred: boolean
   onToggleBlur: () => void
+  /** Dim mode: header, rail and caption fade out and go inert. */
+  dimmed: boolean
 }
 
 /**
@@ -22,7 +24,7 @@ type Props = {
  * button that expands the full title in a narrow panel; on desktop
  * the title is the plain full-text paragraph it has always been.
  */
-export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
+export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Props) {
   const { cardRef, isActive, currentSrc, pageIdx, totalPages, goToPage, loadingPages } =
     useGalleryPages(sauce)
   const smallScreen = useIsSmallScreen()
@@ -65,6 +67,9 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
     onToggleBlur()
   }
 
+  const chromeClass = `transition-opacity duration-200 ${
+    dimmed ? "opacity-0 invisible pointer-events-none" : "opacity-100 visible"
+  }`
 
   // Condensed title (small screens only): more than 4 words → first
   // 4 + " …" as an expand button; ≤ 4 words renders in full, as text.
@@ -89,13 +94,13 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
       )}
 
       {/* top bar */}
-      <header className="absolute top-0 inset-x-0 z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm">
+      <header className={`absolute top-0 inset-x-0 z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm ${chromeClass}`}>
         <span className="font-semibold tracking-wide">Sauce Me Up, RNJesus</span>
         <span className="text-neutral-400">#{sauce.id}</span>
       </header>
 
       {/* right rail — blur toggle, source, and page arrows */}
-      <div className="absolute right-4 bottom-32 z-10 flex flex-col items-center gap-4">
+      <div className={`absolute right-4 bottom-32 z-10 flex flex-col items-center gap-4 ${chromeClass}`}>
         <PillButton
           onClick={onToggleBlur}
           aria-pressed={!blurred}
@@ -132,7 +137,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur }: Props) {
       </div>
 
       {/* caption */}
-      <footer className="absolute bottom-0 inset-x-0 z-10 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black/80 to-transparent">
+      <footer className={`absolute bottom-0 inset-x-0 z-10 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black/80 to-transparent ${chromeClass}`}>
         {condensable && titleExpanded ? (
           <button
             type="button"

@@ -21,8 +21,10 @@ const longTitle: Sauce = {
 
 const shortTitle: Sauce = { ...longTitle, id: 8, title: "Short little title" }
 
-function renderCard(sauce: Sauce) {
-  return render(<SauceCard sauce={sauce} blurred={true} onToggleBlur={() => {}} />)
+function renderCard(sauce: Sauce, dimmed = false) {
+  return render(
+    <SauceCard sauce={sauce} blurred={true} onToggleBlur={() => {}} dimmed={dimmed} />,
+  )
 }
 
 afterEach(() => {
@@ -64,5 +66,29 @@ describe("SauceCard titles on desktop", () => {
     const { container } = renderCard(longTitle)
     expect(screen.getByText(longTitle.title)).not.toBeNull()
     expect(container.querySelector("[aria-expanded]")).toBeNull()
+  })
+})
+
+describe("SauceCard dim mode", () => {
+  it("hides header, rail and footer with the inert class set when dimmed", () => {
+    const { container } = renderCard(longTitle, true)
+    const chrome = [
+      container.querySelector("header"),
+      container.querySelector("footer"),
+      screen.getByRole("button", { name: /👁 Reveal/ }).parentElement,
+    ]
+    for (const el of chrome) {
+      expect(el).not.toBeNull()
+      expect(el!.className).toContain("opacity-0")
+      expect(el!.className).toContain("invisible")
+      expect(el!.className).toContain("pointer-events-none")
+    }
+  })
+
+  it("leaves chrome visible when not dimmed", () => {
+    const { container } = renderCard(longTitle, false)
+    const footer = container.querySelector("footer")
+    expect(footer!.className).toContain("opacity-100")
+    expect(footer!.className).not.toContain("invisible")
   })
 })
