@@ -1,4 +1,4 @@
-import { act, render, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Sauce } from "../types"
 import { IntersectionObserverStub } from "../test/setup"
@@ -167,5 +167,35 @@ describe("useSauceFeed", () => {
     await waitFor(() => expect(hook.items).toHaveLength(1))
     expect(hook.items[0].id).toBe(9)
     expect(hook.error).toBeNull()
+  })
+
+  it("ignores arrow keys originating inside a control, scrolls from the body", async () => {
+    mockBatch.mockResolvedValue([sauce(1)])
+    // A harness with a chrome control for the event to originate
+    // from (the plain Harness above has no focusable elements).
+    function KeyHarness() {
+      hook = useSauceFeed()
+      return (
+        <main ref={hook.feedRef}>
+          <div ref={hook.sentinelRef} />
+          <button type="button">Chrome control</button>
+        </main>
+      )
+    }
+    render(<KeyHarness />)
+    await waitFor(() => expect(hook.items).toHaveLength(1))
+
+    const el = hook.feedRef.current
+    if (!el) throw new Error("feed element not mounted")
+    const scrollBy = vi.fn()
+    el.scrollBy = scrollBy
+
+    // Focus sits on a chrome control: ↓ must not scroll the feed.
+    fireEvent.keyDown(screen.getByRole("button", { name: "Chrome control" }), { key: "ArrowDown" })
+    expect(scrollBy).not.toHaveBeenCalled()
+
+    // The same key from the page body scrolls as always.
+    fireEvent.keyDown(document.body, { key: "ArrowDown" })
+    expect(scrollBy).toHaveBeenCalledTimes(1)
   })
 })

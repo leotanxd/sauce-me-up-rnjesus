@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { FeedMode, Sauce } from "../types"
 import { BATCH_SIZE } from "../lib/config"
 import { fetchNextSauce, fetchSauceBatch } from "../lib/api"
+import { shouldIgnoreArrowKeys } from "../lib/keyboard"
 import { useIntersectionObserver } from "./useIntersectionObserver"
 
 /**
@@ -122,7 +123,13 @@ export function useSauceFeed() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
-      feedRef.current?.scrollBy({ top: (e.key === "ArrowDown" ? 1 : -1) * window.innerHeight, behavior: "smooth" })
+      // Don't hijack arrows while a control has focus (the tap
+      // layer itself is exempt — arrows are its navigation).
+      if (shouldIgnoreArrowKeys(e)) return
+      feedRef.current?.scrollBy({
+        top: (e.key === "ArrowDown" ? 1 : -1) * window.innerHeight,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      })
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)

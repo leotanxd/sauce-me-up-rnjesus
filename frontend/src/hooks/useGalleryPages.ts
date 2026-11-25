@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Sauce } from "../types"
 import { fetchSaucePages } from "../lib/api"
+import { shouldIgnoreArrowKeys } from "../lib/keyboard"
 import { useIntersectionObserver } from "./useIntersectionObserver"
 
 /**
@@ -89,6 +90,9 @@ export function useGalleryPages(sauce: Sauce) {
   useEffect(() => {
     if (!isActive) return
     const onKey = (e: KeyboardEvent) => {
+      // Don't hijack arrows while a control has focus (the tap
+      // layer itself is exempt — arrows are its navigation).
+      if (shouldIgnoreArrowKeys(e)) return
       if (e.key === "ArrowRight") void goToPage(1)
       else if (e.key === "ArrowLeft") void goToPage(-1)
     }

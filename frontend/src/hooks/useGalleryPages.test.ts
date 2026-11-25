@@ -1,4 +1,4 @@
-import { act, render, renderHook, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react"
 import { createElement } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Sauce } from "../types"
@@ -198,6 +198,47 @@ describe("useGalleryPages", () => {
         vi.advanceTimersByTime(5000)
       })
       expect(mockPages).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // The keyboard guard needs a real control in the tree for the
+  // event to originate from — a harness card with a chrome button.
+  function KeyHarness() {
+    harnessLatest = useGalleryPages(sauce)
+    return createElement(
+      "article",
+      { ref: harnessLatest.cardRef },
+      createElement("button", { type: "button" }, "Chrome control"),
+    )
+  }
+
+  it("ignores arrow keys originating inside a control, pages from the body", async () => {
+    vi.useFakeTimers()
+    try {
+      mockPages.mockResolvedValue(pageUrls(3))
+      render(createElement(KeyHarness))
+      activateCard()
+      // Dwell prefetch loads the page list (silently).
+      await act(async () => {
+        vi.advanceTimersByTime(700)
+      })
+      expect(harnessLatest.totalPages).toBe(3)
+      expect(harnessLatest.pageIdx).toBe(0)
+
+      // Focus sits on a chrome control: → must not page.
+      const control = screen.getByRole("button", { name: "Chrome control" })
+      await act(async () => {
+        fireEvent.keyDown(control, { key: "ArrowRight" })
+      })
+      expect(harnessLatest.pageIdx).toBe(0)
+
+      // The same key from the page body pages as always.
+      await act(async () => {
+        fireEvent.keyDown(document.body, { key: "ArrowRight" })
+      })
+      expect(harnessLatest.pageIdx).toBe(1)
     } finally {
       vi.useRealTimers()
     }
