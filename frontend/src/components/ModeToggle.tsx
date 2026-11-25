@@ -6,6 +6,11 @@ type Props = {
 /** Feed-mode toggle (Random = whole catalogue, Popular = currently
  * popular), fixed at the top centre in both the loading and feed views. */
 export default function ModeToggle({ popular, onSwitch }: Props) {
+  // The selected button wears the ember accent; its focus ring is
+  // inset because the group container clips overflow — an outer
+  // ring would be cut off.
+  const ring =
+    "transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ember"
   return (
     <div
       className="fixed top-3 left-1/2 -translate-x-1/2 z-30 flex rounded-full bg-white/10 backdrop-blur border border-white/20 overflow-hidden"
@@ -16,7 +21,7 @@ export default function ModeToggle({ popular, onSwitch }: Props) {
         type="button"
         onClick={() => onSwitch(false)}
         aria-pressed={!popular}
-        className={`px-7 py-4 text-base font-medium ${popular ? "text-white" : "bg-white text-black"}`}
+        className={`px-7 py-4 text-base font-medium ${ring} ${popular ? "text-white hover:bg-white/10" : "bg-ember text-black"}`}
       >
         Random
       </button>
@@ -24,7 +29,7 @@ export default function ModeToggle({ popular, onSwitch }: Props) {
         type="button"
         onClick={() => onSwitch(true)}
         aria-pressed={popular}
-        className={`px-7 py-4 text-base font-medium ${popular ? "bg-white text-black" : "text-white"}`}
+        className={`px-7 py-4 text-base font-medium ${ring} ${popular ? "bg-ember text-black" : "text-white hover:bg-white/10"}`}
       >
         Popular
       </button>

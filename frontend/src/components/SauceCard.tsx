@@ -217,8 +217,9 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
         </p>
       )}
 
-      {/* top bar */}
-      <header className={`absolute top-0 inset-x-0 z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm ${chromeClass}`}>
+      {/* top bar — gradient backing so the text never sits bare
+          over variable artwork (mirrors the caption's) */}
+      <header className={`absolute top-0 inset-x-0 z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm bg-gradient-to-b from-black/60 to-transparent ${chromeClass}`}>
         <span className="font-semibold tracking-wide">Sauce Me Up, RNJesus</span>
         <span className="text-neutral-400">#{sauce.id}</span>
       </header>
@@ -229,7 +230,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
           href={sauce.url}
           target="_blank"
           rel="noreferrer"
-          className={`${PILL_BASE} backdrop-blur ${PILL_LG} font-medium`}
+          className={`${PILL_BASE} backdrop-blur ${PILL_LG} font-medium transition-colors duration-150`}
         >
           ↗ Source
         </a>
@@ -238,7 +239,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
             onClick={() => page(-1)}
             disabled={pageIdx === 0}
             aria-label="Previous page"
-            className="backdrop-blur flex h-16 w-16 items-center justify-center text-4xl font-medium active:scale-95 disabled:opacity-40"
+            className="backdrop-blur flex h-16 w-16 items-center justify-center text-4xl font-medium transition-[transform,background-color,border-color] duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/10"
           >
             ‹
           </PillButton>
@@ -246,7 +247,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
             onClick={() => page(1)}
             disabled={totalPages !== undefined && pageIdx >= totalPages - 1}
             aria-label="Next page"
-            className="backdrop-blur flex h-16 w-16 items-center justify-center text-4xl font-medium active:scale-95 disabled:opacity-40"
+            className="backdrop-blur flex h-16 w-16 items-center justify-center text-4xl font-medium transition-[transform,background-color,border-color] duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/10"
           >
             ›
           </PillButton>
@@ -261,7 +262,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
             aria-expanded={true}
             aria-label="Collapse title"
             onClick={() => setTitleExpanded(false)}
-            className="mb-2 block max-w-44 max-h-[55dvh] overflow-y-auto rounded-xl border border-white/15 bg-black/85 backdrop-blur p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            className="mb-2 block max-w-44 max-h-[55dvh] overflow-y-auto rounded-xl border border-white/15 bg-black/85 backdrop-blur p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember"
           >
             <span className="text-base font-medium leading-snug break-words">{sauce.title}</span>
           </button>
@@ -270,7 +271,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
             type="button"
             aria-expanded={false}
             onClick={() => setTitleExpanded(true)}
-            className="block text-left text-base font-medium leading-snug pr-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            className="block min-h-11 py-2 text-left text-base font-medium leading-snug pr-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember"
           >
             {condensedTitle}
           </button>
@@ -298,7 +299,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
         onPointerMove={swipe.onPointerMove}
         onPointerUp={swipe.onPointerUp}
         onPointerCancel={swipe.onPointerCancel}
-        className="sauce-swipe-layer absolute inset-0 z-[5] cursor-default"
+        className="sauce-swipe-layer absolute inset-0 z-[5] cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ember"
       />
     </article>
   )

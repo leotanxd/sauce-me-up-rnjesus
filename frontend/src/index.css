@@ -7,6 +7,11 @@
   --color-foreground: oklch(0.985 0 0);
   --color-muted-foreground: oklch(0.708 0 0);
   --color-border: oklch(0.269 0 0);
+  /* The one warm accent (Interaction Refresh §3): active mode,
+     focus rings, and the single primary action. ~5.5:1 on black;
+     black text on the fill sits at ~5.9:1. */
+  --color-ember: #FF5A26;
+  --color-ember-bright: #FF6F43; /* hover lift for the filled accent */
 }
 
 html, body, #root { height: 100%; }

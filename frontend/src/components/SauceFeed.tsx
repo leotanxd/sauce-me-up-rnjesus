@@ -35,7 +35,7 @@ export default function SauceFeed() {
         {error ? (
           <>
             <p className="text-sm text-neutral-400">{error}</p>
-            <PillButton onClick={retry} className="px-8 py-4 text-base">
+            <PillButton accent onClick={retry} className="px-8 py-4 text-base font-medium transition-colors duration-150">
               Tap to retry
             </PillButton>
           </>
@@ -45,7 +45,7 @@ export default function SauceFeed() {
         <label className="text-sm text-neutral-500 flex items-center gap-2 py-3">
           <input
             type="checkbox"
-            className="h-6 w-6"
+            className="h-6 w-6 accent-ember focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-2 focus-visible:ring-offset-black"
             checked={blurred}
             onChange={(e) => setBlurred(e.target.checked)}
           />
@@ -79,7 +79,7 @@ export default function SauceFeed() {
       <PillButton
         onClick={toggleDim}
         aria-pressed={dimmed}
-        className={`fixed right-4 bottom-[282px] [@media(max-height:560px)]:bottom-[218px] z-20 backdrop-blur ${PILL_LG} transition-opacity duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${
+        className={`fixed right-4 bottom-[282px] [@media(max-height:560px)]:bottom-[218px] z-20 backdrop-blur ${PILL_LG} transition-[opacity,background-color,border-color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-2 focus-visible:ring-offset-black ${
           dimmed ? "opacity-40 hover:opacity-100 focus-visible:opacity-100" : ""
         }`}
       >
@@ -105,7 +105,7 @@ export default function SauceFeed() {
             <button
               type="button"
               onClick={retry}
-              className="min-h-12 px-5 py-3 text-sm font-medium text-white underline underline-offset-2"
+              className="min-h-12 px-5 py-3 text-sm font-medium text-white underline underline-offset-2 rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-2 focus-visible:ring-offset-black"
             >
               Retry
             </button>
