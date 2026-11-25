@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react"
 import SauceCard from "./SauceCard"
 import LoadingGirl from "./LoadingGirl"
 import ModeToggle from "./ModeToggle"
@@ -28,9 +29,32 @@ export default function SauceFeed() {
     feedRef,
   } = useSauceFeed()
 
+  // ---- Live region (polite): mode switches and load errors, for
+  // screen-reader users. Mode and error share the one region — the
+  // latest announcement wins, which is correct polite behaviour.
+  const [announcement, setAnnouncement] = useState("")
+  const firstRunRef = useRef(true)
+  useEffect(() => {
+    // Skip the initial mount: only an actual switch announces.
+    if (firstRunRef.current) {
+      firstRunRef.current = false
+      return
+    }
+    setAnnouncement(popular ? "Popular feed" : "Random feed")
+  }, [popular])
+  useEffect(() => {
+    if (error) setAnnouncement(error)
+  }, [error])
+  const liveRegion = (
+    <div className="sr-only" aria-live="polite" aria-atomic="true">
+      {announcement}
+    </div>
+  )
+
   if (!items.length) {
     return (
       <main className="h-[100dvh] bg-black text-white flex flex-col items-center justify-center gap-3">
+        {liveRegion}
         <ModeToggle popular={popular} onSwitch={switchMode} />
         {error ? (
           <>
@@ -64,6 +88,7 @@ export default function SauceFeed() {
 
   return (
     <div className="relative bg-black">
+      {liveRegion}
       <div className={chromeClass}>
         <ModeToggle popular={popular} onSwitch={switchMode} />
       </div>

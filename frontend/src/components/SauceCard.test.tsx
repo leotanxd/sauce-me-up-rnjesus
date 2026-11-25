@@ -343,3 +343,41 @@ describe("SauceCard page-turn animation (load-gated)", () => {
     expect(shownWrapper(container).className).toContain("page-anim-next")
   })
 })
+
+describe("SauceCard page live region and arrow boundaries", () => {
+  const threePages = [
+    "https://img.example/7/1.jpg",
+    "https://img.example/7/2.jpg",
+    "https://img.example/7/3.jpg",
+  ]
+  const threePager: Sauce = { ...longTitle, pageCount: 3 }
+
+  beforeEach(() => {
+    mockWaitForImage.mockReset()
+    mockWaitForImage.mockResolvedValue(undefined)
+    vi.mocked(fetchSaucePages).mockResolvedValue(threePages)
+  })
+
+  const activate = () =>
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+
+  it("announces the page position on the active card as pages turn", async () => {
+    const { container } = renderCard(threePager)
+    const region = container.querySelector("[role='status']")!
+    // Inactive cards stay silent.
+    expect(region.textContent).toBe("")
+
+    activate()
+    expect(region.textContent).toBe("Page 1 of 3")
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    expect(region.textContent).toBe("Page 2 of 3")
+  })
+
+})

@@ -217,6 +217,15 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
         </p>
       )}
 
+      {/* Page position for screen readers — a direct child of the
+          article, NOT inside the header/rail/footer: their dim
+          class uses `invisible`, and visibility:hidden can mute a
+          live region. Only the active card carries text, so only
+          it announces. */}
+      <span className="sr-only" role="status">
+        {isActive && totalPages !== undefined ? `Page ${pageIdx + 1} of ${totalPages}` : ""}
+      </span>
+
       {/* top bar — gradient backing so the text never sits bare
           over variable artwork (mirrors the caption's) */}
       <header className={`absolute top-0 inset-x-0 z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm bg-gradient-to-b from-black/60 to-transparent ${chromeClass}`}>
