@@ -16,6 +16,7 @@ vi.mock("../lib/waitForImage", () => ({
 }))
 
 import SauceFeed from "./SauceFeed"
+import ModeToggle from "./ModeToggle"
 import { fetchSauceBatch, fetchSaucePages } from "../lib/api"
 
 const mockBatch = vi.mocked(fetchSauceBatch)
@@ -114,5 +115,35 @@ describe("SauceFeed mode-switch fade", () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe("ModeToggle focus ring", () => {
+  it("gives the selected (ember-filled) button a white ring, the other an ember ring", () => {
+    render(<ModeToggle popular={false} onSwitch={() => {}} />)
+    const random = screen.getByRole("button", { name: "Random" })
+    const popular = screen.getByRole("button", { name: "Popular" })
+    // Random is selected: an ember ring would vanish on its ember
+    // fill, so it gets the white ring instead.
+    expect(random.className).toContain("bg-ember")
+    expect(random.className).toContain("focus-visible:ring-white")
+    expect(random.className).not.toContain("focus-visible:ring-ember")
+    // Popular is unselected: the ember ring, unchanged.
+    expect(popular.className).toContain("focus-visible:ring-ember")
+    expect(popular.className).not.toContain("focus-visible:ring-white")
+    // Both rings stay inset (the group container clips overflow).
+    expect(random.className).toContain("focus-visible:ring-inset")
+    expect(popular.className).toContain("focus-visible:ring-inset")
+  })
+
+  it("moves the white ring with the selection", () => {
+    render(<ModeToggle popular={true} onSwitch={() => {}} />)
+    const popular = screen.getByRole("button", { name: "Popular" })
+    const random = screen.getByRole("button", { name: "Random" })
+    expect(popular.className).toContain("bg-ember")
+    expect(popular.className).toContain("focus-visible:ring-white")
+    expect(popular.className).not.toContain("focus-visible:ring-ember")
+    expect(random.className).toContain("focus-visible:ring-ember")
+    expect(random.className).not.toContain("focus-visible:ring-white")
   })
 })
