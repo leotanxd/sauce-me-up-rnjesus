@@ -43,6 +43,16 @@ body {
    without ever fighting the feed's vertical scroll-snap. */
 .sauce-card .sauce-swipe-layer { touch-action: pan-y; }
 
+/* Strip pages (webtoon-style tall images) scroll vertically
+   inside the card; hide the scroller's scrollbar to match the
+   feed's chrome-free aesthetic. touch-action comes from the
+   .sauce-swipe-layer rule above (the scroller carries that class
+   as the card's gesture surface); overscroll-behavior stays at
+   the default so a pan past the strip's end chains into the
+   feed's snap container and moves one card. */
+.strip-scroll { scrollbar-width: none; }
+.strip-scroll::-webkit-scrollbar { display: none; }
+
 /* Blur toggle — requirement 3: heavy blur + slight zoom so edges don't leak */
 .sauce-img { transition: filter 300ms ease, transform 300ms ease; }
 .sauce-img.is-blurred { filter: blur(28px); transform: scale(1.12); }

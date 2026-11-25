@@ -1,8 +1,16 @@
-import { useEffect, useRef, useState } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type SyntheticEvent as ReactSyntheticEvent,
+} from "react"
 import type { Sauce } from "../types"
 import { useGalleryPages } from "../hooks/useGalleryPages"
 import { useHorizontalSwipe } from "../hooks/useHorizontalSwipe"
 import { useIsSmallScreen } from "../hooks/useIsSmallScreen"
+import { isStripImage } from "../lib/aspect"
+import { loadImageMeta } from "../lib/loadImageMeta"
 import { waitForImage } from "../lib/waitForImage"
 import PillButton, { PILL_BASE, PILL_LG } from "./ui/PillButton"
 
@@ -164,6 +172,48 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
     setRetryNonce((n) => n + 1)
   }
 
+  // ---- Strip (webtoon) page detection ----------------------------
+  // Some galleries publish each page as a stitched vertical strip
+  // (height many times the width); fit-to-screen rendering shrinks
+  // a whole strip into an unreadable ribbon. The shown page's
+  // natural size is measured (loadImageMeta, plus the img's own
+  // load event as a backstop) and strip pages render width-full in
+  // an in-card scroller instead — see the render branch below.
+  // Classification is per shown page: mixed galleries flip modes
+  // as the user pages. The meta is reset DURING RENDER when the
+  // src changes (the previous-value pattern, like pageDirRef
+  // above) so a stale aspect never classifies the next page, not
+  // even for one frame.
+  const [shownMeta, setShownMeta] = useState<{ width: number; height: number } | null>(null)
+  const [metaSrc, setMetaSrc] = useState(shownSrc)
+  if (metaSrc !== shownSrc) {
+    setMetaSrc(shownSrc)
+    setShownMeta(null)
+  }
+
+  useEffect(() => {
+    if (!shownSrc) return
+    let cancelled = false
+    void loadImageMeta(shownSrc).then((meta) => {
+      if (!cancelled) setShownMeta(meta)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [shownSrc])
+
+  // Backstop: the shown <img> itself reports its natural size on
+  // load. Covers the Retry remount (same src, fresh element),
+  // where the effect above does not re-run.
+  const onShownImgLoad = (e: ReactSyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      setShownMeta({ width: img.naturalWidth, height: img.naturalHeight })
+    }
+  }
+
+  const stripMode = shownMeta !== null && isStripImage(shownMeta.width, shownMeta.height)
+
   const swipe = useHorizontalSwipe({
     enabled: isActive,
     onSwipe: (delta) => page(delta),
@@ -191,6 +241,17 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
     }
     if (consumeSuppression()) return
     onToggleBlur()
+  }
+
+  // Strip mode's gesture surface is a div (a <button> cannot wrap
+  // a scrolling region), so Enter/Space activation is wired by
+  // hand to the same tap semantics as the button it replaces.
+  // preventDefault keeps Space from scrolling the strip instead
+  // of "clicking" it.
+  const onStripKeyDown = (e: ReactKeyboardEvent<HTMLElement>) => {
+    if (e.key !== "Enter" && e.key !== " ") return
+    e.preventDefault()
+    onTapLayerClick()
   }
 
   const chromeClass = `transition-opacity duration-200 ${
@@ -227,17 +288,57 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
               : animDir === -1
                 ? "page-anim-prev"
                 : ""
-          }`}
+          }${stripMode ? " z-[6]" : ""}`}
           onAnimationEnd={onSlideEnd}
         >
-          <img
-            src={shownSrc}
-            alt={blurred ? "" : sauce.title}
-            aria-hidden={blurred}
-            draggable={false}
-            onError={() => setImgError(true)}
-            className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
-          />
+          {stripMode ? (
+            /* Strip page: width-full inside an in-card vertical
+               scroller (keyed by src, so each strip starts at its
+               top), presented at readable width like the source
+               site's reader instead of fit-to-screen. The scroller
+               IS the gesture surface here — it carries the tap
+               layer's class, pointer handlers and click semantics,
+               and sits above the (unrendered) tap-layer button's
+               z-[5] via the wrapper's z-[6]. A <button> cannot wrap
+               a scrolling region, so it is a div with role="button"
+               and hand-wired Enter/Space activation. Scroll
+               chaining stays at the default: a pan that runs past
+               the strip's end chains into the feed and moves one
+               card, so the feed stays navigable. */
+            <div
+              key={shownSrc}
+              role="button"
+              tabIndex={0}
+              aria-label={blurred ? "Reveal image" : "Blur image"}
+              onClick={onTapLayerClick}
+              onKeyDown={onStripKeyDown}
+              onPointerDown={swipe.onPointerDown}
+              onPointerMove={swipe.onPointerMove}
+              onPointerUp={swipe.onPointerUp}
+              onPointerCancel={swipe.onPointerCancel}
+              className="strip-scroll sauce-swipe-layer absolute inset-0 overflow-y-auto cursor-default focus-visible:outline-none"
+            >
+              <img
+                src={shownSrc}
+                alt={blurred ? "" : sauce.title}
+                aria-hidden={blurred}
+                draggable={false}
+                onLoad={onShownImgLoad}
+                onError={() => setImgError(true)}
+                className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} block h-auto w-full select-none`}
+              />
+            </div>
+          ) : (
+            <img
+              src={shownSrc}
+              alt={blurred ? "" : sauce.title}
+              aria-hidden={blurred}
+              draggable={false}
+              onLoad={onShownImgLoad}
+              onError={() => setImgError(true)}
+              className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
+            />
+          )}
         </div>
       ) : (
         <p className="text-neutral-500 text-sm px-8 text-center">
@@ -370,17 +471,22 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
           reported exactly that as a bug after clicking to unblur and
           then pressing Space/Enter). It stays a real focusable
           button — keyboard activation still toggles blur — it just
-          carries no visible ring. Don't re-add one. */}
-      <button
-        type="button"
-        aria-label={blurred ? "Reveal image" : "Blur image"}
-        onClick={onTapLayerClick}
-        onPointerDown={swipe.onPointerDown}
-        onPointerMove={swipe.onPointerMove}
-        onPointerUp={swipe.onPointerUp}
-        onPointerCancel={swipe.onPointerCancel}
-        className="sauce-swipe-layer absolute inset-0 z-[5] cursor-default focus-visible:outline-none"
-      />
+          carries no visible ring. Don't re-add one. In strip mode
+          this button is not rendered at all: the strip scroller
+          above takes over its role (it would otherwise re-capture
+          the vertical pans the strip needs). */}
+      {!stripMode ? (
+        <button
+          type="button"
+          aria-label={blurred ? "Reveal image" : "Blur image"}
+          onClick={onTapLayerClick}
+          onPointerDown={swipe.onPointerDown}
+          onPointerMove={swipe.onPointerMove}
+          onPointerUp={swipe.onPointerUp}
+          onPointerCancel={swipe.onPointerCancel}
+          className="sauce-swipe-layer absolute inset-0 z-[5] cursor-default focus-visible:outline-none"
+        />
+      ) : null}
     </article>
   )
 }

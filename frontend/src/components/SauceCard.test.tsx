@@ -16,11 +16,20 @@ vi.mock("../lib/waitForImage", () => ({
   waitForImage: vi.fn(() => Promise.resolve()),
 }))
 
+// Natural-size measurement (strip detection): same treatment —
+// null (unknown size → normal page) by default, scripted per src
+// in the strip tests.
+vi.mock("../lib/loadImageMeta", () => ({
+  loadImageMeta: vi.fn(() => Promise.resolve(null)),
+}))
+
 import SauceCard from "./SauceCard"
 import { fetchSaucePages } from "../lib/api"
+import { loadImageMeta } from "../lib/loadImageMeta"
 import { waitForImage } from "../lib/waitForImage"
 
 const mockWaitForImage = vi.mocked(waitForImage)
+const mockLoadImageMeta = vi.mocked(loadImageMeta)
 
 const longTitle: Sauce = {
   id: 7,
@@ -523,5 +532,125 @@ describe("SauceCard page live region and arrow boundaries", () => {
     })
     expect(prev.disabled).toBe(false)
     expect(next.disabled).toBe(true)
+  })
+})
+
+describe("SauceCard strip (webtoon) pages", () => {
+  // Sanitised fixture mirroring gallery 491558's shape: a normal
+  // opening page (300×420), one genuine strip file (720×16001 —
+  // the real gallery's page 4, measured), then a normal page
+  // again (1280×1807). Classification is per page, so the modes
+  // must flip as the user pages. Sizes arrive via the
+  // loadImageMeta mock, scripted per src.
+  const stripPages = [
+    "https://img.example/491558/1.jpg",
+    "https://img.example/491558/2.jpg",
+    "https://img.example/491558/3.jpg",
+  ]
+  const metaBySrc: Record<string, { width: number; height: number }> = {
+    [stripPages[0]]: { width: 300, height: 420 },
+    [stripPages[1]]: { width: 720, height: 16001 },
+    [stripPages[2]]: { width: 1280, height: 1807 },
+  }
+  const stripSauce: Sauce = {
+    id: 491558,
+    title: "Strip Fixture Gallery",
+    url: "https://nhentai.net/g/491558/",
+    firstImageUrl: stripPages[0],
+    pageCount: 3,
+  }
+
+  const activate = () =>
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+
+  beforeEach(() => {
+    mockWaitForImage.mockReset()
+    mockWaitForImage.mockResolvedValue(undefined)
+    vi.mocked(fetchSaucePages).mockResolvedValue(stripPages)
+    mockLoadImageMeta.mockReset()
+    mockLoadImageMeta.mockImplementation((src) =>
+      Promise.resolve(metaBySrc[src] ?? null),
+    )
+  })
+
+  afterEach(() => {
+    // Leave the shared mock at its file-wide default for the
+    // other suites: unknown size → normal page.
+    mockLoadImageMeta.mockReset()
+    mockLoadImageMeta.mockResolvedValue(null)
+  })
+
+  it("renders normal pages as today and strip pages width-full in the in-card scroller, flipping per page", async () => {
+    const onToggleBlur = vi.fn()
+    const { container } = render(
+      <SauceCard
+        sauce={stripSauce}
+        blurred={true}
+        onToggleBlur={onToggleBlur}
+        dimmed={false}
+        onToggleDim={() => {}}
+      />,
+    )
+    activate()
+    await act(async () => {})
+    const region = container.querySelector("[role='status']")!
+    // During a slide there are two imgs: outgoing underlay first,
+    // shown page last.
+    const shownImg = () => Array.from(container.querySelectorAll("img")).at(-1)!
+
+    // Page 1 (normal): fit-to-screen exactly as today, the tap
+    // layer is the full-screen <button>, no strip scroller.
+    expect(region.textContent).toBe("Page 1 of 3")
+    expect(shownImg().getAttribute("src")).toBe(stripPages[0])
+    expect(shownImg().className).toContain("object-contain")
+    expect(container.querySelector(".strip-scroll")).toBeNull()
+    expect(screen.getByRole("button", { name: "Reveal image" }).tagName).toBe("BUTTON")
+
+    // Page 2 (the strip): width-full inside .strip-scroll, no
+    // object-contain; the caption still counts it as page 2.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    expect(region.textContent).toBe("Page 2 of 3")
+    const scroller = container.querySelector(".strip-scroll")
+    expect(scroller).not.toBeNull()
+    expect(scroller!.className).toContain("overflow-y-auto")
+    const stripImg = scroller!.querySelector("img")!
+    expect(stripImg.getAttribute("src")).toBe(stripPages[1])
+    expect(stripImg.className).toContain("w-full")
+    expect(stripImg.className).toContain("h-auto")
+    expect(stripImg.className).not.toContain("object-contain")
+
+    // The gesture surface is the scroller itself (a div — a
+    // <button> cannot wrap a scrolling region): tapping it
+    // toggles blur, and Enter on it does too (hand-wired
+    // activation parity with the button it replaces).
+    const surface = screen.getByRole("button", { name: "Reveal image" })
+    expect(surface).toBe(scroller)
+    expect(surface.tagName).toBe("DIV")
+    fireEvent.click(surface)
+    expect(onToggleBlur).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(surface, { key: "Enter" })
+    expect(onToggleBlur).toHaveBeenCalledTimes(2)
+
+    // A horizontal swipe on the strip surface still turns the page.
+    const pointer = { pointerId: 1, pointerType: "touch", isPrimary: true }
+    fireEvent.pointerDown(surface, { ...pointer, clientX: 200, clientY: 100 })
+    fireEvent.pointerMove(surface, { ...pointer, clientX: 150, clientY: 101 })
+    fireEvent.pointerUp(surface, { ...pointer, clientX: 130, clientY: 101 })
+    await act(async () => {})
+
+    // Page 3 is normal again: per-page classification — the
+    // scroller is gone, contain rendering and the <button> tap
+    // layer are restored.
+    expect(region.textContent).toBe("Page 3 of 3")
+    expect(container.querySelector(".strip-scroll")).toBeNull()
+    expect(shownImg().getAttribute("src")).toBe(stripPages[2])
+    expect(shownImg().className).toContain("object-contain")
+    expect(screen.getByRole("button", { name: "Reveal image" }).tagName).toBe("BUTTON")
   })
 })
