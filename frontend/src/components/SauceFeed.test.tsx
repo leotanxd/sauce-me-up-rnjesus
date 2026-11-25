@@ -188,11 +188,24 @@ describe("SauceFeed UI zoom", () => {
     expect(wrapper.style.getPropertyValue("--ui-zoom")).toBe("1")
 
     // The scaled set: card header, the right column (rail + Dim +
-    // title/# as one unit), caption footer, ModeToggle root.
+    // title/# as one unit), ModeToggle root. Cards have no footer
+    // any more — the Page X of Y line lives in the column.
     expect(container.querySelector("header")!.className).toContain("ui-zoom")
-    expect(container.querySelector("footer")!.className).toContain("ui-zoom")
+    expect(container.querySelector("footer")).toBeNull()
     expect(dimOffButtons()[0].parentElement!.className).toContain("ui-zoom")
     expect(screen.getByRole("group", { name: "Feed mode" }).className).toContain("ui-zoom")
+
+    // Exhaustive per-card inventory: within the first card, exactly
+    // two elements carry ui-zoom — the header and the right-column
+    // container (the image-error panel is absent in this render).
+    // Anything else gaining the class would double-scale, since
+    // nested zoom compounds — e.g. the Page X of Y line must scale
+    // only by inheritance through the column, never on its own.
+    const article = container.querySelector("article")!
+    const cardZoomed = [...article.querySelectorAll(".ui-zoom")]
+    expect(cardZoomed).toHaveLength(2)
+    expect(cardZoomed).toContain(article.querySelector("header"))
+    expect(cardZoomed).toContain(dimOffButtons()[0].parentElement)
 
     // Never scaled: the artwork subtree, the tap layer, the card
     // and feed geometry, placeholders.

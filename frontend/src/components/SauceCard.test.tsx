@@ -68,7 +68,7 @@ describe("SauceCard titles (all widths)", () => {
     fireEvent.click(toggle)
     const panel = screen.getByRole("button", { name: "Collapse title" })
     expect(panel.getAttribute("aria-expanded")).toBe("true")
-    expect(panel.className).toContain("max-h-[calc(100dvh-328px)]")
+    expect(panel.className).toContain("max-h-[calc(100dvh-360px)]")
     expect(panel.className).toContain("overflow-y-auto")
     expect(screen.getByText(longTitle.title)).not.toBeNull()
 
@@ -106,7 +106,7 @@ describe("SauceCard titles (all widths)", () => {
 })
 
 describe("SauceCard right column", () => {
-  it("stacks #number → title → Dim → rail in one corner-anchored column", () => {
+  it("stacks #number → title → page line → Dim → rail in one corner-anchored column", () => {
     renderCard(longTitle)
 
     const dim = screen.getByRole("button", { name: "Dim: OFF" })
@@ -118,14 +118,17 @@ describe("SauceCard right column", () => {
     expect(column.className).toContain("z-20")
 
     // Document order inside the column is the visual stack,
-    // top-down: #number, title, Dim, Source, page arrows (jsdom
-    // has no layout, so order + classes are the assertable
-    // geometry).
+    // top-down: #number, title, page line, Dim, Source, page
+    // arrows (jsdom has no layout, so order + classes are the
+    // assertable geometry). The page line is the #/title block's
+    // last row (the card is inactive here, so the sr-only region
+    // is empty and this text is uniquely the visible line).
     const number = screen.getByText("#7")
     const title = screen.getByRole("button", { name: "One two three four …" })
+    const pageLine = screen.getByText("Page 1 of 12")
     const source = screen.getByRole("link", { name: /Source/ })
     const prev = screen.getByRole("button", { name: "Previous page" })
-    const ordered = [number, title, dim, source, prev]
+    const ordered = [number, title, pageLine, dim, source, prev]
     for (let i = 0; i < ordered.length - 1; i++) {
       expect(
         ordered[i].compareDocumentPosition(ordered[i + 1]) &
@@ -154,7 +157,7 @@ describe("SauceCard right column", () => {
     ).toBeTruthy()
   })
 
-  it("leaves only the Page X of Y line in the footer — no title", async () => {
+  it("shows the Page X of Y line in the column between the title and Dim — and no footer exists", async () => {
     vi.mocked(fetchSaucePages).mockResolvedValue(
       Array.from({ length: 12 }, (_, i) => `https://img.example/7/${i + 1}.jpg`),
     )
@@ -166,11 +169,26 @@ describe("SauceCard right column", () => {
     })
     await act(async () => {})
 
-    const footer = container.querySelector("footer")!
-    expect(footer.textContent).toContain("Page 1 of 12")
-    expect(footer.textContent).toContain("Blurred — tap the image to show")
-    expect(footer.textContent).not.toContain(longTitle.title)
-    expect(footer.querySelector("[aria-expanded]")).toBeNull()
+    // The bottom-left footer is gone entirely.
+    expect(container.querySelector("footer")).toBeNull()
+
+    // The page line is the last row of the #/title block, after
+    // the title toggle, and the block is still Dim's previous
+    // sibling — i.e. the line sits between the title and Dim.
+    // (Scoped to the block: the sr-only live region carries the
+    // same "Page 1 of 12" string.)
+    const dim = screen.getByRole("button", { name: "Dim: OFF" })
+    const block = dim.previousElementSibling!
+    expect(block).toBe(screen.getByText("#7").parentElement)
+    const pageLine = block.lastElementChild!
+    expect(pageLine.textContent).toBe("Page 1 of 12")
+    const title = screen.getByRole("button", { name: "One two three four …" })
+    expect(
+      title.compareDocumentPosition(pageLine) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    // The footer's hint and blur note were dropped, not moved.
+    expect(block.textContent).not.toContain("Blurred — tap the image to show")
+    expect(block.textContent).not.toContain("to browse this sauce")
   })
 })
 
@@ -262,11 +280,10 @@ describe("SauceCard rail contents", () => {
 })
 
 describe("SauceCard dim mode", () => {
-  it("hides header, rail, title/# block and footer with the inert class set when dimmed", () => {
+  it("hides header, rail and the title/# block with the inert class set when dimmed", () => {
     const { container } = renderCard(longTitle, true)
     const chrome = [
       container.querySelector("header"),
-      container.querySelector("footer"),
       screen.getByRole("link", { name: /Source/ }).parentElement,
       screen.getByText("#7").parentElement,
     ]
@@ -276,6 +293,13 @@ describe("SauceCard dim mode", () => {
       expect(el!.className).toContain("invisible")
       expect(el!.className).toContain("pointer-events-none")
     }
+    // The page line rides inside the #/title block, so it hides
+    // with the block (the block is asserted hidden just above).
+    // The card is inactive here, so this text is uniquely the
+    // visible line, not the sr-only region.
+    expect(screen.getByText("Page 1 of 12").parentElement).toBe(
+      screen.getByText("#7").parentElement,
+    )
     // The column container itself is never hidden — it holds the
     // Dim exit, and the hidden children keep their layout space
     // (visibility), so Dim does not move when dim toggles.
@@ -286,10 +310,10 @@ describe("SauceCard dim mode", () => {
   })
 
   it("leaves chrome visible when not dimmed", () => {
-    const { container } = renderCard(longTitle, false)
-    const footer = container.querySelector("footer")
-    expect(footer!.className).toContain("opacity-100")
-    expect(footer!.className).not.toContain("invisible")
+    renderCard(longTitle, false)
+    const block = screen.getByText("#7").parentElement
+    expect(block!.className).toContain("opacity-100")
+    expect(block!.className).not.toContain("invisible")
   })
 })
 
@@ -701,11 +725,16 @@ describe("SauceCard strip (webtoon) pages", () => {
     expect(screen.getByRole("button", { name: "Reveal image" }).tagName).toBe("BUTTON")
 
     // Page 2 (the strip): width-full inside .strip-scroll, no
-    // object-contain; the caption still counts it as page 2.
+    // object-contain; the live region still counts it as page 2,
+    // and so does the visible page line in the column.
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Next page" }))
     })
     expect(region.textContent).toBe("Page 2 of 3")
+    const titleBlock = screen.getByText("#491558").parentElement!
+    expect(
+      Array.from(titleBlock.children).some((el) => el.textContent === "Page 2 of 3"),
+    ).toBe(true)
     const scroller = container.querySelector(".strip-scroll")
     expect(scroller).not.toBeNull()
     expect(scroller!.className).toContain("overflow-y-auto")
@@ -820,7 +849,7 @@ describe("SauceCard image zoom", () => {
     expect(onToggleBlur).toHaveBeenCalledTimes(1)
   })
 
-  it("chrome isolation: zooming transforms only the zoom layer — header, column, Dim, caption and the img itself carry no transform", () => {
+  it("chrome isolation: zooming transforms only the zoom layer — header, column, Dim, page line and the img itself carry no transform", () => {
     const { container } = renderZoomCard()
     doubleTap(tapLayer())
 
@@ -831,9 +860,18 @@ describe("SauceCard image zoom", () => {
     const img = layer.querySelector("img")!
     expect(img.style.transform).toBe("")
 
+    // The page line lives in the #/title block (scoped lookup:
+    // the sr-only region carries the same string on an active
+    // card).
+    const block = screen.getByText("#7").parentElement!
+    const pageLine = Array.from(block.children).find(
+      (el) => el.textContent === "Page 1 of 12",
+    )
+    expect(pageLine).not.toBeUndefined()
+
     const chrome = [
       container.querySelector("header"),
-      container.querySelector("footer"),
+      pageLine,
       screen.getByRole("button", { name: "Dim: OFF" }).parentElement,
       screen.getByRole("button", { name: "Dim: OFF" }),
       screen.getByRole("link", { name: /Source/ }).parentElement,

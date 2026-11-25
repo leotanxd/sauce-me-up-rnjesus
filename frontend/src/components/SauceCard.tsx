@@ -19,7 +19,7 @@ type Props = {
   sauce: Sauce
   blurred: boolean
   onToggleBlur: () => void
-  /** Dim mode: header, rail, title/# block and footer fade out and go inert. */
+  /** Dim mode: header, rail and the title/# block fade out and go inert. */
   dimmed: boolean
   /** Toggle dim mode; this card's Dim pill stays available while dimmed. */
   onToggleDim: () => void
@@ -415,7 +415,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
       )}
 
       {/* Page position for screen readers — a direct child of the
-          article, NOT inside the header/rail/footer: their dim
+          article, NOT inside the header or the column: their dim
           class uses `invisible`, and visibility:hidden can mute a
           live region. Only the active card carries text, so only
           it announces. */}
@@ -447,8 +447,9 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
 
       {/* Right column — ONE bottom-anchored stack at the safe-area
           corner: rail at the corner, Dim 16px above it, the title
-          above Dim, the sauce #number on top (DOM order below is
-          top-down: #/title block, Dim, rail). A single flex column
+          above Dim with the Page X of Y line under it, the sauce
+          #number on top (DOM order below is top-down: #/title/page
+          block, Dim, rail). A single flex column
           rather than per-element offsets, so the safe-area bottom
           inset (~34px on a notched phone) is applied once at the
           anchor and the stack can never tear. Everything rides
@@ -463,11 +464,12 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
           column above the strip scroller (z-[6]) and the tap
           layer (z-[5]). */}
       <div className="ui-zoom absolute right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1rem,env(safe-area-inset-bottom))] z-20 flex flex-col items-end gap-4 [@media(max-height:560px)]:gap-2">
-        {/* #number + title block (chrome). The expanded title
-            panel grows upward in-flow from here — its max-height
-            caps keep its top below the ModeToggle: the panel's
-            bottom edge sits 244px above the card bottom (188px
-            compressed), and the caps reserve a further 84px. */}
+        {/* #number + title + page line block (chrome). The
+            expanded title panel grows upward in-flow from here —
+            its max-height caps keep its top below the ModeToggle:
+            the panel's bottom edge sits 276px above the card
+            bottom (212px compressed), and the caps reserve a
+            further 84px. */}
         <div className={`flex w-44 flex-col items-end gap-4 [@media(max-height:560px)]:gap-2 ${chromeClass}`}>
           <span className="text-sm text-neutral-400 [text-shadow:_0_1px_3px_rgb(0_0_0_/_0.9)]">#{sauce.id}</span>
           {condensable && titleExpanded ? (
@@ -476,7 +478,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
               aria-expanded={true}
               aria-label="Collapse title"
               onClick={() => setTitleExpanded(false)}
-              className="block w-full max-h-[calc(100dvh-328px)] [@media(max-height:560px)]:max-h-[calc(100dvh-272px)] overflow-y-auto rounded-xl border border-white/15 bg-black/85 backdrop-blur p-3 text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember"
+              className="block w-full max-h-[calc(100dvh-360px)] [@media(max-height:560px)]:max-h-[calc(100dvh-296px)] overflow-y-auto rounded-xl border border-white/15 bg-black/85 backdrop-blur p-3 text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember"
             >
               <span className="text-base font-medium leading-snug break-words">{sauce.title}</span>
             </button>
@@ -492,6 +494,20 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
           ) : (
             <p className="text-base font-medium leading-snug text-right break-words [text-shadow:_0_1px_3px_rgb(0_0_0_/_0.9)]">{sauce.title}</p>
           )}
+          {/* Page line — third row of this block, between the
+              title and Dim. Only the bare position: the old
+              footer's "← → to browse" hint and "Blurred — tap to
+              show" note are gone (they would wrap in this w-44
+              block and shift the stack on every blur toggle).
+              min-h-4 keeps the slot — and Dim's position —
+              constant across all three text states. */}
+          <p className="min-h-4 text-xs text-neutral-400 text-right [text-shadow:_0_1px_3px_rgb(0_0_0_/_0.9)]">
+            {loadingPages
+              ? "Loading pages…"
+              : totalPages !== undefined
+                ? `Page ${pageIdx + 1} of ${totalPages}`
+                : ""}
+          </p>
         </div>
 
         {/* Dim toggle — never chrome-hidden: it is the only exit
@@ -537,21 +553,6 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
           </div>
         </div>
       </div>
-
-      {/* caption — the Page X of Y line only; the title lives in
-          the right column now. pr-40 reserves the corner rail's
-          footprint (16px offset + 136px arrows row = 152px) so
-          the line never runs under the arrows on narrow screens. */}
-      <footer className={`ui-zoom absolute bottom-0 inset-x-0 z-10 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black/80 to-transparent ${chromeClass}`}>
-        <p className="text-xs text-neutral-400 pr-40">
-          {loadingPages
-            ? "Loading pages…"
-            : totalPages !== undefined
-              ? `Page ${pageIdx + 1} of ${totalPages} · ← → to browse this sauce`
-              : "← → to browse this sauce's pages"}
-          {blurred ? " · Blurred — tap the image to show" : ""}
-        </p>
-      </footer>
 
       {/* invisible tap-to-toggle layer (below the buttons); also the
           horizontal-swipe surface — pan-y keeps vertical scrolling

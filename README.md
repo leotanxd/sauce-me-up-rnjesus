@@ -34,7 +34,7 @@ it's working.)
 - **In-gallery paging three ways** — the ‹ › buttons, the ← → arrow
   keys, or a horizontal swipe on the image.
 - **Page X of Y, always shown** — every card displays its page
-  indicator from the moment it loads.
+  indicator in the right-side column, from the moment it loads.
 - **Condensed titles** — long titles shrink to a few words at any
   screen size; tap to expand the full title in a narrow panel, tap
   again to collapse.
@@ -70,9 +70,9 @@ it's working.)
 
 Things to know:
 
-- Each card shows the sauce's title and its ID (`#…`) in the
-  right-side column above the Dim toggle, and a **Page X of Y**
-  indicator at the bottom.
+- Each card shows the sauce's ID (`#…`), its title, and a
+  **Page X of Y** indicator together in the right-side column,
+  above the Dim toggle.
 - The first page is what loads with the feed; the rest of a
   gallery's pages are fetched lazily, only when you start paging
   through it — by button, arrow key, or first swipe.
