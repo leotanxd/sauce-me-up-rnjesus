@@ -8,7 +8,6 @@ import {
 import type { Sauce } from "../types"
 import { useGalleryPages } from "../hooks/useGalleryPages"
 import { useHorizontalSwipe } from "../hooks/useHorizontalSwipe"
-import { useIsSmallScreen } from "../hooks/useIsSmallScreen"
 import { isStripImage } from "../lib/aspect"
 import { loadImageMeta } from "../lib/loadImageMeta"
 import { waitForImage } from "../lib/waitForImage"
@@ -18,7 +17,7 @@ type Props = {
   sauce: Sauce
   blurred: boolean
   onToggleBlur: () => void
-  /** Dim mode: header, rail and caption fade out and go inert. */
+  /** Dim mode: header, rail, title/# block and footer fade out and go inert. */
   dimmed: boolean
   /** Toggle dim mode; this card's Dim pill stays available while dimmed. */
   onToggleDim: () => void
@@ -31,14 +30,13 @@ type Props = {
  * or a horizontal swipe on the image. All paging state lives in
  * useGalleryPages; this is rendering plus gesture/title wiring.
  *
- * On small screens a long title condenses to its first 4 words as a
- * button that expands the full title in a narrow panel; on desktop
- * the title is the plain full-text paragraph it has always been.
+ * A long title condenses to its first 4 words at any screen size,
+ * as a button in the right-side column that expands the full title
+ * in a narrow panel; a short title is plain text there.
  */
 export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onToggleDim }: Props) {
   const { cardRef, isActive, currentSrc, pageIdx, totalPages, goToPage, loadingPages } =
     useGalleryPages(sauce)
-  const smallScreen = useIsSmallScreen()
   const [titleExpanded, setTitleExpanded] = useState(false)
 
   // Any page turn collapses an expanded title. Buttons and swipe go
@@ -258,10 +256,10 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
     dimmed ? "opacity-0 invisible pointer-events-none" : "opacity-100 visible"
   }`
 
-  // Condensed title (small screens only): more than 4 words → first
-  // 4 + " …" as an expand button; ≤ 4 words renders in full, as text.
+  // Condensed title (all widths): more than 4 words → first 4 +
+  // " …" as an expand button; ≤ 4 words renders in full, as text.
   const words = sauce.title.trim().split(/\s+/)
-  const condensable = smallScreen && words.length > 4
+  const condensable = words.length > 4
   const condensedTitle = `${words.slice(0, 4).join(" ")} …`
 
   return (
@@ -371,89 +369,111 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
       ) : null}
 
       {/* top bar — gradient backing so the text never sits bare
-          over variable artwork (mirrors the caption's) */}
-      <header className={`absolute top-0 inset-x-0 z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm bg-gradient-to-b from-black/60 to-transparent ${chromeClass}`}>
+          over variable artwork (mirrors the caption's). Brand
+          only: the sauce #number lives in the right column now. */}
+      <header className={`absolute top-0 inset-x-0 z-10 flex items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm bg-gradient-to-b from-black/60 to-transparent ${chromeClass}`}>
         <span className="font-semibold tracking-wide">Sauce Me Up, RNJesus</span>
-        <span className="text-neutral-400">#{sauce.id}</span>
       </header>
 
-      {/* right rail — source link and page arrows */}
-      <div className={`absolute right-[max(1rem,env(safe-area-inset-right))] bottom-32 [@media(max-height:560px)]:bottom-16 z-10 flex flex-col items-center gap-4 ${chromeClass}`}>
-        <a
-          href={sauce.url}
-          target="_blank"
-          rel="noreferrer"
-          className={`${PILL_BASE} backdrop-blur ${PILL_LG} font-medium transition-colors duration-150`}
+      {/* Right column — ONE bottom-anchored stack at the safe-area
+          corner: rail at the corner, Dim 16px above it, the title
+          above Dim, the sauce #number on top (DOM order below is
+          top-down: #/title block, Dim, rail). A single flex column
+          rather than per-element offsets, so the safe-area bottom
+          inset (~34px on a notched phone) is applied once at the
+          anchor and the stack can never tear. Everything rides
+          112px lower than the old floated layout (the rail was at
+          bottom-32); under max-height:560px the stack instead
+          SHRINKS by the same 64px the old layout shifted — gaps
+          16→8, arrows 64→48, labelled pills py-4→py-3. The
+          container is never dim-hidden (it holds the Dim exit):
+          the rail and the title/# block carry the chrome class,
+          and because `invisible` keeps their layout space, Dim
+          does not move a pixel when dim toggles. z-20 keeps the
+          column above the strip scroller (z-[6]) and the tap
+          layer (z-[5]). */}
+      <div className="absolute right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1rem,env(safe-area-inset-bottom))] z-20 flex flex-col items-end gap-4 [@media(max-height:560px)]:gap-2">
+        {/* #number + title block (chrome). The expanded title
+            panel grows upward in-flow from here — its max-height
+            caps keep its top below the ModeToggle: the panel's
+            bottom edge sits 244px above the card bottom (188px
+            compressed), and the caps reserve a further 84px. */}
+        <div className={`flex w-44 flex-col items-end gap-4 [@media(max-height:560px)]:gap-2 ${chromeClass}`}>
+          <span className="text-sm text-neutral-400 [text-shadow:_0_1px_3px_rgb(0_0_0_/_0.9)]">#{sauce.id}</span>
+          {condensable && titleExpanded ? (
+            <button
+              type="button"
+              aria-expanded={true}
+              aria-label="Collapse title"
+              onClick={() => setTitleExpanded(false)}
+              className="block w-full max-h-[calc(100dvh-328px)] [@media(max-height:560px)]:max-h-[calc(100dvh-272px)] overflow-y-auto rounded-xl border border-white/15 bg-black/85 backdrop-blur p-3 text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember"
+            >
+              <span className="text-base font-medium leading-snug break-words">{sauce.title}</span>
+            </button>
+          ) : condensable ? (
+            <button
+              type="button"
+              aria-expanded={false}
+              onClick={() => setTitleExpanded(true)}
+              className="block w-full rounded-xl border border-white/15 bg-black/85 backdrop-blur p-3 text-right text-base font-medium leading-snug break-words focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember"
+            >
+              {condensedTitle}
+            </button>
+          ) : (
+            <p className="text-base font-medium leading-snug text-right break-words [text-shadow:_0_1px_3px_rgb(0_0_0_/_0.9)]">{sauce.title}</p>
+          )}
+        </div>
+
+        {/* Dim toggle — never chrome-hidden: it is the only exit
+            from dim mode, so while dimmed it stays clickable at
+            40% opacity (restored on hover/focus). */}
+        <PillButton
+          onClick={onToggleDim}
+          aria-pressed={dimmed}
+          className={`backdrop-blur ${PILL_LG} [@media(max-height:560px)]:py-3 transition-[opacity,background-color,border-color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-2 focus-visible:ring-offset-black ${
+            dimmed ? "opacity-40 hover:opacity-100 focus-visible:opacity-100" : ""
+          }`}
         >
-          ↗ Source
-        </a>
-        <div className="flex items-center gap-2">
-          <PillButton
-            onClick={() => page(-1)}
-            disabled={pageIdx === 0}
-            aria-label="Previous page"
-            className="backdrop-blur flex h-16 w-16 items-center justify-center text-4xl font-medium transition-[transform,background-color,border-color] duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/10"
+          {dimmed ? "Dim: ON" : "Dim: OFF"}
+        </PillButton>
+
+        {/* rail — source link and page arrows, at the corner */}
+        <div className={`flex flex-col items-center gap-4 [@media(max-height:560px)]:gap-2 ${chromeClass}`}>
+          <a
+            href={sauce.url}
+            target="_blank"
+            rel="noreferrer"
+            className={`${PILL_BASE} backdrop-blur ${PILL_LG} [@media(max-height:560px)]:py-3 font-medium transition-colors duration-150`}
           >
-            ‹
-          </PillButton>
-          <PillButton
-            onClick={() => page(1)}
-            disabled={totalPages !== undefined && pageIdx >= totalPages - 1}
-            aria-label="Next page"
-            className="backdrop-blur flex h-16 w-16 items-center justify-center text-4xl font-medium transition-[transform,background-color,border-color] duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/10"
-          >
-            ›
-          </PillButton>
+            ↗ Source
+          </a>
+          <div className="flex items-center gap-2">
+            <PillButton
+              onClick={() => page(-1)}
+              disabled={pageIdx === 0}
+              aria-label="Previous page"
+              className="backdrop-blur flex h-16 w-16 [@media(max-height:560px)]:h-12 [@media(max-height:560px)]:w-12 items-center justify-center text-4xl font-medium transition-[transform,background-color,border-color] duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/10"
+            >
+              ‹
+            </PillButton>
+            <PillButton
+              onClick={() => page(1)}
+              disabled={totalPages !== undefined && pageIdx >= totalPages - 1}
+              aria-label="Next page"
+              className="backdrop-blur flex h-16 w-16 [@media(max-height:560px)]:h-12 [@media(max-height:560px)]:w-12 items-center justify-center text-4xl font-medium transition-[transform,background-color,border-color] duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/10"
+            >
+              ›
+            </PillButton>
+          </div>
         </div>
       </div>
 
-      {/* Dim toggle — part of this card's right-side column, so it
-          scrolls with the card instead of staying fixed over the
-          feed. Geometry (right offset is the safe-area inset form
-          — max(1rem, env(safe-area-inset-right)) — so landscape
-          notches clear the column; on desktop env() is 0 and it
-          reduces to 1rem): the rail spans bottom 128–266px, so Dim
-          sits at bottom-[282px] — 16px above the rail's top edge.
-          The max-height variant compresses the column (rail
-          included) on short/landscape viewports. Unlike the chrome
-          above, this pill never takes the hidden class set: it is
-          the only exit from dim mode, so while dimmed it stays
-          clickable at 40% opacity (restored on hover/focus). */}
-      <PillButton
-        onClick={onToggleDim}
-        aria-pressed={dimmed}
-        className={`absolute right-[max(1rem,env(safe-area-inset-right))] bottom-[282px] [@media(max-height:560px)]:bottom-[218px] z-20 backdrop-blur ${PILL_LG} transition-[opacity,background-color,border-color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-2 focus-visible:ring-offset-black ${
-          dimmed ? "opacity-40 hover:opacity-100 focus-visible:opacity-100" : ""
-        }`}
-      >
-        {dimmed ? "Dim: ON" : "Dim: OFF"}
-      </PillButton>
-
-      {/* caption */}
+      {/* caption — the Page X of Y line only; the title lives in
+          the right column now. pr-40 reserves the corner rail's
+          footprint (16px offset + 136px arrows row = 152px) so
+          the line never runs under the arrows on narrow screens. */}
       <footer className={`absolute bottom-0 inset-x-0 z-10 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black/80 to-transparent ${chromeClass}`}>
-        {condensable && titleExpanded ? (
-          <button
-            type="button"
-            aria-expanded={true}
-            aria-label="Collapse title"
-            onClick={() => setTitleExpanded(false)}
-            className="mb-2 block max-w-44 max-h-[55dvh] overflow-y-auto rounded-xl border border-white/15 bg-black/85 backdrop-blur p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember"
-          >
-            <span className="text-base font-medium leading-snug break-words">{sauce.title}</span>
-          </button>
-        ) : condensable ? (
-          <button
-            type="button"
-            aria-expanded={false}
-            onClick={() => setTitleExpanded(true)}
-            className="block min-h-11 py-2 text-left text-base font-medium leading-snug pr-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember"
-          >
-            {condensedTitle}
-          </button>
-        ) : (
-          <p className="text-base font-medium leading-snug pr-20">{sauce.title}</p>
-        )}
-        <p className="text-xs text-neutral-400 mt-1">
+        <p className="text-xs text-neutral-400 pr-40">
           {loadingPages
             ? "Loading pages…"
             : totalPages !== undefined

@@ -71,14 +71,15 @@ describe("SauceFeed live region", () => {
 })
 
 describe("SauceFeed Dim placement", () => {
-  it("renders one per-card (absolute, not fixed) Dim toggle per mounted card", async () => {
+  it("renders one per-card Dim toggle per mounted card, inside the corner-anchored column", async () => {
     mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
     render(<SauceFeed />)
     await waitFor(() => expect(dimOffButtons()).toHaveLength(3))
     for (const dim of dimOffButtons()) {
-      expect(dim.className).toContain("absolute")
       expect(dim.className).not.toContain("fixed")
-      expect(dim.className).toContain("bottom-[282px]")
+      const column = dim.parentElement!
+      expect(column.className).toContain("bottom-[max(1rem,env(safe-area-inset-bottom))]")
+      expect(column.className).toContain("right-[max(1rem,env(safe-area-inset-right))]")
     }
   })
 })

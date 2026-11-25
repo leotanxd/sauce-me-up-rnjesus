@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Sauce } from "../types"
-import { IntersectionObserverStub, setSmallScreen } from "../test/setup"
+import { IntersectionObserverStub } from "../test/setup"
 
 vi.mock("../lib/api", () => ({
   fetchNextSauce: vi.fn(),
@@ -55,12 +55,10 @@ function renderCard(sauce: Sauce, dimmed = false, onToggleDim = () => {}) {
 
 afterEach(() => {
   cleanup()
-  setSmallScreen(false)
 })
 
-describe("SauceCard titles on small screens", () => {
+describe("SauceCard titles (all widths)", () => {
   it("condenses a >4-word title to 4 words + … and expands on tap", () => {
-    setSmallScreen(true)
     renderCard(longTitle)
 
     const toggle = screen.getByRole("button", { name: "One two three four …" })
@@ -70,7 +68,8 @@ describe("SauceCard titles on small screens", () => {
     fireEvent.click(toggle)
     const panel = screen.getByRole("button", { name: "Collapse title" })
     expect(panel.getAttribute("aria-expanded")).toBe("true")
-    expect(panel.className).toContain("max-w-44")
+    expect(panel.className).toContain("max-h-[calc(100dvh-328px)]")
+    expect(panel.className).toContain("overflow-y-auto")
     expect(screen.getByText(longTitle.title)).not.toBeNull()
 
     fireEvent.click(panel)
@@ -79,25 +78,104 @@ describe("SauceCard titles on small screens", () => {
   })
 
   it("renders a ≤4-word title in full with no expand button", () => {
-    setSmallScreen(true)
     const { container } = renderCard(shortTitle)
     expect(screen.getByText("Short little title")).not.toBeNull()
     expect(container.querySelector("[aria-expanded]")).toBeNull()
   })
+
+  it("collapses an expanded title on a page turn", async () => {
+    vi.mocked(fetchSaucePages).mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => `https://img.example/7/${i + 1}.jpg`),
+    )
+    renderCard(longTitle)
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "One two three four …" }))
+    expect(screen.getByRole("button", { name: "Collapse title" })).not.toBeNull()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    expect(screen.getByRole("button", { name: "One two three four …" })).not.toBeNull()
+    expect(screen.queryByText(longTitle.title)).toBeNull()
+  })
 })
 
-describe("SauceCard titles on desktop", () => {
-  it("renders the full title as plain text with no expand button", () => {
-    setSmallScreen(false)
+describe("SauceCard right column", () => {
+  it("stacks #number → title → Dim → rail in one corner-anchored column", () => {
+    renderCard(longTitle)
+
+    const dim = screen.getByRole("button", { name: "Dim: OFF" })
+    const column = dim.parentElement!
+    // The container carries the safe-area corner anchor, not the
+    // elements: no per-element bottom offsets exist to tear.
+    expect(column.className).toContain("bottom-[max(1rem,env(safe-area-inset-bottom))]")
+    expect(column.className).toContain("right-[max(1rem,env(safe-area-inset-right))]")
+    expect(column.className).toContain("z-20")
+
+    // Document order inside the column is the visual stack,
+    // top-down: #number, title, Dim, Source, page arrows (jsdom
+    // has no layout, so order + classes are the assertable
+    // geometry).
+    const number = screen.getByText("#7")
+    const title = screen.getByRole("button", { name: "One two three four …" })
+    const source = screen.getByRole("link", { name: /Source/ })
+    const prev = screen.getByRole("button", { name: "Previous page" })
+    const ordered = [number, title, dim, source, prev]
+    for (let i = 0; i < ordered.length - 1; i++) {
+      expect(
+        ordered[i].compareDocumentPosition(ordered[i + 1]) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    }
+    // Dim sits directly between the title/# block and the rail.
+    expect(dim.previousElementSibling).toBe(number.parentElement)
+    expect(dim.nextElementSibling).toBe(source.parentElement)
+    // The rail no longer floats at its old offsets.
+    expect(source.parentElement!.className).not.toContain("bottom-32")
+    expect(source.parentElement!.className).not.toContain("bottom-16")
+  })
+
+  it("keeps the header brand-only; the #number lives in the column, before the title", () => {
     const { container } = renderCard(longTitle)
-    expect(screen.getByText(longTitle.title)).not.toBeNull()
-    expect(container.querySelector("[aria-expanded]")).toBeNull()
+    const header = container.querySelector("header")!
+    expect(header.textContent).toContain("Sauce Me Up, RNJesus")
+    expect(header.textContent).not.toContain("#7")
+    // Exactly one #number in the card, ahead of the title.
+    expect(screen.getAllByText("#7")).toHaveLength(1)
+    const number = screen.getByText("#7")
+    const title = screen.getByRole("button", { name: "One two three four …" })
+    expect(
+      number.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it("leaves only the Page X of Y line in the footer — no title", async () => {
+    vi.mocked(fetchSaucePages).mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => `https://img.example/7/${i + 1}.jpg`),
+    )
+    const { container } = renderCard(longTitle)
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+    await act(async () => {})
+
+    const footer = container.querySelector("footer")!
+    expect(footer.textContent).toContain("Page 1 of 12")
+    expect(footer.textContent).toContain("Blurred — tap the image to show")
+    expect(footer.textContent).not.toContain(longTitle.title)
+    expect(footer.querySelector("[aria-expanded]")).toBeNull()
   })
 })
 
 describe("SauceCard title dismiss and swipe suppression", () => {
   it("a drag that dismisses an expanded title consumes the suppression flag, so the next tap toggles blur", () => {
-    setSmallScreen(true)
     const onToggleBlur = vi.fn()
     render(
       <SauceCard
@@ -184,12 +262,13 @@ describe("SauceCard rail contents", () => {
 })
 
 describe("SauceCard dim mode", () => {
-  it("hides header, rail and footer with the inert class set when dimmed", () => {
+  it("hides header, rail, title/# block and footer with the inert class set when dimmed", () => {
     const { container } = renderCard(longTitle, true)
     const chrome = [
       container.querySelector("header"),
       container.querySelector("footer"),
       screen.getByRole("link", { name: /Source/ }).parentElement,
+      screen.getByText("#7").parentElement,
     ]
     for (const el of chrome) {
       expect(el).not.toBeNull()
@@ -197,6 +276,13 @@ describe("SauceCard dim mode", () => {
       expect(el!.className).toContain("invisible")
       expect(el!.className).toContain("pointer-events-none")
     }
+    // The column container itself is never hidden — it holds the
+    // Dim exit, and the hidden children keep their layout space
+    // (visibility), so Dim does not move when dim toggles.
+    const column = screen.getByRole("button", { name: "Dim: ON" }).parentElement!
+    expect(column.className).not.toContain("opacity-0")
+    expect(column.className).not.toContain("invisible")
+    expect(column.className).not.toContain("pointer-events-none")
   })
 
   it("leaves chrome visible when not dimmed", () => {
@@ -208,18 +294,20 @@ describe("SauceCard dim mode", () => {
 })
 
 describe("SauceCard Dim toggle", () => {
-  it("renders the Dim pill in the card at the rail's column geometry and toggles on click", () => {
+  it("renders the Dim pill in the card's corner column and toggles on click", () => {
     const onToggleDim = vi.fn()
     renderCard(longTitle, false, onToggleDim)
 
     const dim = screen.getByRole("button", { name: "Dim: OFF" })
     expect(dim.getAttribute("aria-pressed")).toBe("false")
-    // Per-card (absolute), not the old feed-level fixed pill.
-    expect(dim.className).toContain("absolute")
+    // Per-card, inside the corner-anchored column — not the old
+    // feed-level fixed pill, and no per-element bottom offset.
     expect(dim.className).not.toContain("fixed")
-    expect(dim.className).toContain("right-[max(1rem,env(safe-area-inset-right))]")
-    expect(dim.className).toContain("bottom-[282px]")
-    expect(dim.className).toContain("[@media(max-height:560px)]:bottom-[218px]")
+    expect(dim.className).not.toContain("bottom-[282px]")
+    const column = dim.parentElement!
+    expect(column.className).toContain("absolute")
+    expect(column.className).toContain("bottom-[max(1rem,env(safe-area-inset-bottom))]")
+    expect(column.className).toContain("right-[max(1rem,env(safe-area-inset-right))]")
 
     fireEvent.click(dim)
     expect(onToggleDim).toHaveBeenCalledTimes(1)

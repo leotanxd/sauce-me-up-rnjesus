@@ -28,11 +28,12 @@ it's working.)
   keys, or a horizontal swipe on the image.
 - **Page X of Y, always shown** — every card displays its page
   indicator from the moment it loads.
-- **Condensed titles on small screens** — long titles shrink to a few
-  words; tap to expand the full title in a narrow panel, tap again
-  to collapse.
-- **Dim mode** — one toggle hides every button and caption, leaving
-  just the image (and the Dim toggle itself, so you can get back).
+- **Condensed titles** — long titles shrink to a few words at any
+  screen size; tap to expand the full title in a narrow panel, tap
+  again to collapse.
+- **Dim mode** — one toggle hides the right-side column and every
+  other button and caption, leaving just the image (and the Dim
+  toggle itself, so you can get back).
 - **Thumb-sized controls** — the feed's main buttons (paging ‹ ›,
   ↗ Source, Random | Popular, Dim, and Retry) are at
   least 48px in both dimensions, sized for thumbs on mobile and
@@ -51,13 +52,14 @@ it's working.)
 | `←` arrow key (or the `‹` button) | Previous page of that sauce |
 | Tap the image | Toggle the blur |
 | **Dim: ON/OFF** toggle (right side) | Hide / show all buttons and text |
-| Tap the title (small screens) | Expand a condensed title; tap again to collapse |
+| Tap the title | Expand a condensed title; tap again to collapse |
 | **↗ Source** button | Open the gallery at the source site |
 
 Things to know:
 
-- Each card shows the sauce's title, its ID (`#…`), and a
-  **Page X of Y** indicator.
+- Each card shows the sauce's title and its ID (`#…`) in the
+  right-side column above the Dim toggle, and a **Page X of Y**
+  indicator at the bottom.
 - The first page is what loads with the feed; the rest of a
   gallery's pages are fetched lazily, only when you start paging
   through it — by button, arrow key, or first swipe.
