@@ -109,7 +109,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
       </header>
 
       {/* right rail — source link and page arrows */}
-      <div className={`absolute right-4 bottom-32 z-10 flex flex-col items-center gap-4 ${chromeClass}`}>
+      <div className={`absolute right-4 bottom-32 [@media(max-height:560px)]:bottom-16 z-10 flex flex-col items-center gap-4 ${chromeClass}`}>
         <a
           href={sauce.url}
           target="_blank"

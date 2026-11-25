@@ -50,8 +50,8 @@ it's working.)
 | `→` arrow key (or the `›` button) | Next page of the sauce you're viewing |
 | `←` arrow key (or the `‹` button) | Previous page of that sauce |
 | Tap the image | Toggle the blur |
-| **Blur: ON/OFF** switch (bottom-left) | Toggle blur for the whole feed |
-| **Dim: ON/OFF** toggle (bottom-left) | Hide / show all buttons and text |
+| **Blur: ON/OFF** switch (right side) | Toggle blur for the whole feed |
+| **Dim: ON/OFF** toggle (right side) | Hide / show all buttons and text |
 | Tap the title (small screens) | Expand a condensed title; tap again to collapse |
 | **↗ Source** button | Open the gallery at the source site |
 

@@ -68,23 +68,36 @@ export default function SauceFeed() {
         <ModeToggle popular={popular} onSwitch={switchMode} />
       </div>
 
-      {/* dim toggle, stacked above the global blur switch; the only
-          control that stays visible (at 40% opacity) while dimmed */}
+      {/* dim toggle, stacked above the global blur switch in the
+          right-side column; the only control that stays visible (at
+          40% opacity) while dimmed. Independently fixed — not in a
+          shared container with the blur switch — so it doesn't shift
+          a pixel when that switch hides in dim mode. Offset
+          derivation is documented at the blur switch below. */}
       <PillButton
         onClick={toggleDim}
         aria-pressed={dimmed}
-        className={`fixed left-3 bottom-44 z-20 backdrop-blur ${PILL_LG} transition-opacity duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${
+        className={`fixed right-4 bottom-[356px] [@media(max-height:560px)]:bottom-[292px] z-20 backdrop-blur ${PILL_LG} transition-opacity duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${
           dimmed ? "opacity-40 hover:opacity-100 focus-visible:opacity-100" : ""
         }`}
       >
         {dimmed ? "Dim: ON" : "Dim: OFF"}
       </PillButton>
 
-      {/* global blur switch, fixed so it survives scrolling */}
+      {/* global blur switch, fixed on the right so it survives
+          scrolling. Right-column geometry (all right-4, 16px gaps):
+          the card rail spans bottom 128–266px, so this pill sits at
+          bottom-[282px] — its 282–340px band is exactly the one the
+          rail's removed Reveal button used to occupy — and the Dim
+          pill stacks above it at bottom-[356px] (282 + 58px pill +
+          16). If the rail's contents, its bottom-32 offset, or
+          PILL_LG ever change, recompute these offsets. The
+          max-height variant compresses the whole column (rail
+          included) on short/landscape viewports. */}
       <PillButton
         onClick={toggleBlur}
         aria-pressed={!blurred}
-        className={`fixed left-3 bottom-24 z-20 backdrop-blur ${PILL_LG} ${chromeClass}`}
+        className={`fixed right-4 bottom-[282px] [@media(max-height:560px)]:bottom-[218px] z-20 backdrop-blur ${PILL_LG} ${chromeClass}`}
       >
         {blurred ? "Blur: ON" : "Blur: OFF"}
       </PillButton>
