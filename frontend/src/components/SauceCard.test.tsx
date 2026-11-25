@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Sauce } from "../types"
 import { IntersectionObserverStub, setSmallScreen } from "../test/setup"
 
@@ -9,8 +9,18 @@ vi.mock("../lib/api", () => ({
   fetchSaucePages: vi.fn(),
 }))
 
+// The load gate: jsdom's Image never fires load, so the wait is
+// stubbed — resolved by default (a cache-hot image), controllable
+// per test where the gate's timing is the point.
+vi.mock("../lib/waitForImage", () => ({
+  waitForImage: vi.fn(() => Promise.resolve()),
+}))
+
 import SauceCard from "./SauceCard"
 import { fetchSaucePages } from "../lib/api"
+import { waitForImage } from "../lib/waitForImage"
+
+const mockWaitForImage = vi.mocked(waitForImage)
 
 const longTitle: Sauce = {
   id: 7,
@@ -147,43 +157,189 @@ describe("SauceCard dim mode", () => {
   })
 })
 
-describe("SauceCard page-turn animation", () => {
+describe("SauceCard page-turn animation (load-gated)", () => {
   const pages = [
     "https://img.example/7/1.jpg",
     "https://img.example/7/2.jpg",
     "https://img.example/7/3.jpg",
   ]
 
-  it("slides the incoming page in from the turn's direction", async () => {
-    vi.mocked(fetchSaucePages).mockResolvedValue(pages)
-    const { container } = renderCard(longTitle)
-    // Make this the active card, as when it's the one on screen.
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  const activate = () =>
     act(() => {
       IntersectionObserverStub.latest().trigger([
         { isIntersecting: true, intersectionRatio: 1 },
       ])
     })
 
-    const img = () => container.querySelector("img")
-    const wrapper = () => img()!.parentElement
+  // During a slide there are two imgs: the outgoing underlay first,
+  // the shown (incoming) page last.
+  const imgs = (container: HTMLElement) => Array.from(container.querySelectorAll("img"))
+  const shownImg = (container: HTMLElement) => imgs(container).at(-1)!
+  const shownWrapper = (container: HTMLElement) => shownImg(container).parentElement!
+
+  beforeEach(() => {
+    mockWaitForImage.mockReset()
+    mockWaitForImage.mockResolvedValue(undefined)
+    vi.mocked(fetchSaucePages).mockResolvedValue(pages)
+  })
+
+  it("holds the current page until the incoming image is paintable, then slides it in", async () => {
+    const load = deferred<void>()
+    mockWaitForImage.mockReturnValue(load.promise)
+    const { container } = renderCard(longTitle)
+    activate()
 
     // Initial render: first image, no animation armed.
-    expect(img()!.getAttribute("src")).toBe(longTitle.firstImageUrl)
-    expect(wrapper()!.className).not.toContain("page-anim-")
+    expect(shownImg(container).getAttribute("src")).toBe(longTitle.firstImageUrl)
+    expect(shownWrapper(container).className).not.toContain("page-anim-")
 
-    // Next page: wrapper remounts on the new src, sliding in as a
-    // "next" turn. (jsdom runs no animations — assert class + src.)
+    // Next click: the pager targets page 2, but while its image is
+    // still loading the shown page stays page 1 — no swap, no slide
+    // over an unpainted frame.
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Next page" }))
     })
-    expect(img()!.getAttribute("src")).toBe(pages[1])
-    expect(wrapper()!.className).toContain("page-anim-next")
+    expect(imgs(container)).toHaveLength(1)
+    expect(shownImg(container).getAttribute("src")).toBe(pages[0])
+    expect(shownWrapper(container).className).not.toContain("page-anim-")
 
-    // Previous page: same story, mirrored class.
+    // Load lands: page 2 commits WITH the slide, over page 1.
+    await act(async () => {
+      load.resolve()
+    })
+    expect(shownImg(container).getAttribute("src")).toBe(pages[1])
+    expect(shownWrapper(container).className).toContain("page-anim-next")
+
+    // Mirror for Prev: held while loading, then page-anim-prev.
+    const loadBack = deferred<void>()
+    mockWaitForImage.mockReturnValue(loadBack.promise)
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Previous page" }))
     })
-    expect(img()!.getAttribute("src")).toBe(pages[0])
-    expect(wrapper()!.className).toContain("page-anim-prev")
+    expect(shownImg(container).getAttribute("src")).toBe(pages[1])
+    await act(async () => {
+      loadBack.resolve()
+    })
+    expect(shownImg(container).getAttribute("src")).toBe(pages[0])
+    expect(shownWrapper(container).className).toContain("page-anim-prev")
+  })
+
+  it("commits only the latest target when turns come faster than loads", async () => {
+    const loads: ReturnType<typeof deferred<void>>[] = []
+    mockWaitForImage.mockImplementation(() => {
+      const d = deferred<void>()
+      loads.push(d)
+      return d.promise
+    })
+    const { container } = renderCard(longTitle)
+    activate()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    expect(loads).toHaveLength(2)
+    expect(shownImg(container).getAttribute("src")).toBe(pages[0])
+
+    // The superseded page-2 load resolves late: commits nothing.
+    await act(async () => {
+      loads[0].resolve()
+    })
+    expect(shownImg(container).getAttribute("src")).toBe(pages[0])
+    expect(imgs(container)).toHaveLength(1)
+
+    // The latest target (page 3) commits when its load lands.
+    await act(async () => {
+      loads[1].resolve()
+    })
+    expect(shownImg(container).getAttribute("src")).toBe(pages[2])
+    expect(shownWrapper(container).className).toContain("page-anim-next")
+  })
+
+  it("swaps immediately, ungated and unanimated, when the page list replaces the first-image src", async () => {
+    // Same pages, different CDN host string than firstImageUrl:
+    // the page-list load changes the src at pageIdx 0 with no turn
+    // direction, so it must not wait on the gate.
+    const altPages = [
+      "https://cdn-other.example/7/1.jpg",
+      "https://cdn-other.example/7/2.jpg",
+    ]
+    vi.mocked(fetchSaucePages).mockResolvedValue(altPages)
+    mockWaitForImage.mockReturnValue(new Promise<void>(() => {}))
+    const { container } = renderCard(longTitle)
+    activate()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    // The dir-0 swap to the list's page 1 already happened, even
+    // though the (directed) page-2 gate never resolves.
+    expect(shownImg(container).getAttribute("src")).toBe(altPages[0])
+    expect(shownWrapper(container).className).not.toContain("page-anim-")
+    expect(mockWaitForImage).toHaveBeenCalledWith(altPages[1])
+    expect(imgs(container)).toHaveLength(1)
+  })
+
+  it("keeps the outgoing page underneath during the slide and removes it on animationend", async () => {
+    const { container } = renderCard(longTitle)
+    activate()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    const all = imgs(container)
+    expect(all).toHaveLength(2)
+    expect(all[0].getAttribute("src")).toBe(pages[0]) // underlay: outgoing
+    expect(all[1].getAttribute("src")).toBe(pages[1]) // shown: incoming
+
+    fireEvent.animationEnd(shownWrapper(container))
+    expect(imgs(container)).toHaveLength(1)
+    expect(shownImg(container).getAttribute("src")).toBe(pages[1])
+  })
+
+  it("removes the underlay on the fallback timeout when no animationend fires", async () => {
+    vi.useFakeTimers()
+    try {
+      const { container } = renderCard(longTitle)
+      activate()
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+      })
+      expect(imgs(container)).toHaveLength(2)
+
+      // Reduced-motion case: animation is none, animationend never
+      // fires — the timeout clear is what removes the underlay.
+      await act(async () => {
+        vi.advanceTimersByTime(400)
+      })
+      expect(imgs(container)).toHaveLength(1)
+      expect(shownImg(container).getAttribute("src")).toBe(pages[1])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("still commits the turn when the image wait fails", async () => {
+    mockWaitForImage.mockRejectedValue(new Error("decode failed"))
+    const { container } = renderCard(longTitle)
+    activate()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    expect(shownImg(container).getAttribute("src")).toBe(pages[1])
+    expect(shownWrapper(container).className).toContain("page-anim-next")
   })
 })

@@ -4,12 +4,13 @@ import { fetchSaucePages } from "../lib/api"
 import { useIntersectionObserver } from "./useIntersectionObserver"
 
 /**
- * The in-sauce paging machine for one card: lazy page-list fetch,
- * arrow-key paging on the active card, and next-page preloading.
+ * The in-sauce paging machine for one card: page-list fetch (lazily
+ * on first paging, or after a short dwell on the viewed card),
+ * arrow-key paging on the active card, and adjacent-page preloading.
  *
  * A card is "active" when it (mostly) fills the viewport — with
  * scroll-snap that's exactly the sauce the user is looking at. The
- * full page list is fetched lazily on first paging and cached here.
+ * full page list is fetched at most once and cached here.
  */
 export function useGalleryPages(sauce: Sauce) {
   const cardRef = useRef<HTMLElement>(null)
@@ -19,28 +20,47 @@ export function useGalleryPages(sauce: Sauce) {
   const [pages, setPages] = useState<string[] | null>(null)
   const [pageIdx, setPageIdx] = useState(0)
   const [loadingPages, setLoadingPages] = useState(false)
-  const loadingRef = useRef(false)
+  // The one in-flight page-list fetch, shared by every caller — a
+  // paging press that lands while the dwell prefetch (below) is
+  // still fetching awaits the SAME promise and applies its delta
+  // when it lands, instead of finding the fetch "busy" and losing
+  // the press.
+  const fetchRef = useRef<Promise<string[] | null> | null>(null)
 
-  const ensurePages = useCallback(async (): Promise<string[] | null> => {
-    if (pages) return pages
-    if (loadingRef.current) return null
-    loadingRef.current = true
-    setLoadingPages(true)
-    try {
-      const images = await fetchSaucePages(sauce.id)
-      const list = images.length ? images : sauce.firstImageUrl ? [sauce.firstImageUrl] : []
-      setPages(list)
-      return list
-    } catch {
-      // Do NOT cache a failure (previously this stored a 1-page list
-      // and disabled paging for this card forever). Leaving pages null
-      // means the next arrow press retries the fetch.
-      return null
-    } finally {
-      loadingRef.current = false
-      setLoadingPages(false)
-    }
-  }, [pages, sauce.id, sauce.firstImageUrl])
+  /**
+   * Fetch (once) and cache the page list. `silent` is for the dwell
+   * prefetch: it must not raise `loadingPages`, or the caption would
+   * flicker "Loading pages…" on every card the user merely looks
+   * at — that signal stays paging-triggered only. Failures are NOT
+   * cached: the next call retries the fetch.
+   */
+  const ensurePages = useCallback(
+    async (options?: { silent?: boolean }): Promise<string[] | null> => {
+      if (pages) return pages
+      if (!fetchRef.current) {
+        fetchRef.current = (async () => {
+          try {
+            const images = await fetchSaucePages(sauce.id)
+            const list = images.length ? images : sauce.firstImageUrl ? [sauce.firstImageUrl] : []
+            setPages(list)
+            return list
+          } catch {
+            return null
+          } finally {
+            fetchRef.current = null
+          }
+        })()
+      }
+      if (options?.silent) return fetchRef.current
+      setLoadingPages(true)
+      try {
+        return await fetchRef.current
+      } finally {
+        setLoadingPages(false)
+      }
+    },
+    [pages, sauce.id, sauce.firstImageUrl],
+  )
 
   // Arrow presses that arrive while the page list is still loading are
   // accumulated here and applied, clamped, once the list exists — so
@@ -56,7 +76,7 @@ export function useGalleryPages(sauce: Sauce) {
       }
       pendingDeltaRef.current += delta
       const list = await ensurePages()
-      if (!list) return // fetch in flight (its caller applies the total) or failed (next press retries)
+      if (!list) return // fetch failed (next press retries); the accumulated delta stays pending for it
       const total = pendingDeltaRef.current
       pendingDeltaRef.current = 0
       if (list.length < 2 || total === 0) return
@@ -76,13 +96,35 @@ export function useGalleryPages(sauce: Sauce) {
     return () => window.removeEventListener("keydown", onKey)
   }, [isActive, goToPage])
 
-  // Preload the next page so paging feels instant.
+  // Prefetch the page list once the user has actually dwelled on
+  // this card (~700 ms active), so the first swipe doesn't have to
+  // wait on the fetch — and the preload below gets page 2 loading
+  // while page 1 is still on screen. Silent: no "Loading pages…"
+  // caption for a card merely looked at. Fast scrolling triggers
+  // almost none of these thanks to the dwell. Cost: one upstream
+  // detail call per dwelled-on card (a JSON call, not image data);
+  // the backend's detail cache absorbs repeats.
+  useEffect(() => {
+    if (!isActive || pages) return
+    const timer = window.setTimeout(() => {
+      void ensurePages({ silent: true })
+    }, 700)
+    return () => window.clearTimeout(timer)
+  }, [isActive, pages, ensurePages])
+
+  // Preload the adjacent pages so paging feels instant — the next
+  // page (the common direction) and the previous one (back-swipes
+  // otherwise rely on cache + re-decode luck). Adjacent-both-ways
+  // is the full extent of image preloading: whole galleries are
+  // never preloaded (image data is the expensive part on mobile).
   useEffect(() => {
     if (!pages) return
-    const next = pages[pageIdx + 1]
-    if (next) {
-      const img = new Image()
-      img.src = next
+    for (const idx of [pageIdx + 1, pageIdx - 1]) {
+      const src = pages[idx]
+      if (src) {
+        const img = new Image()
+        img.src = src
+      }
     }
   }, [pages, pageIdx])
 

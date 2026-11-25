@@ -1,6 +1,8 @@
-import { act, renderHook, waitFor } from "@testing-library/react"
+import { act, render, renderHook, waitFor } from "@testing-library/react"
+import { createElement } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Sauce } from "../types"
+import { IntersectionObserverStub } from "../test/setup"
 
 vi.mock("../lib/api", () => ({
   fetchNextSauce: vi.fn(),
@@ -106,5 +108,98 @@ describe("useGalleryPages", () => {
     // Having landed on page 2 (index 1), the preload targets page 3.
     await waitFor(() => expect(preloaded.length).toBeGreaterThan(0))
     expect(preloaded).toContain("https://img.example/3.jpg")
+  })
+
+  it("preloads the previous page too once paging has moved", async () => {
+    const preloaded: string[] = []
+    class FakeImage {
+      set src(value: string) {
+        preloaded.push(value)
+      }
+    }
+    vi.stubGlobal("Image", FakeImage)
+
+    mockPages.mockResolvedValue(pageUrls(3))
+    const { result } = renderHook(() => useGalleryPages(sauce))
+    await act(async () => {
+      await result.current.goToPage(1)
+    })
+
+    // On page 2 (index 1), BOTH neighbours are preloaded — the
+    // previous page included, so a back-swipe is gated on a
+    // cache-hot image just like a forward one.
+    await waitFor(() => expect(preloaded).toContain("https://img.example/1.jpg"))
+    expect(preloaded).toContain("https://img.example/3.jpg")
+  })
+
+  // The dwell prefetch needs an "active" card, which renderHook
+  // can't produce (it never attaches cardRef to an element) — so
+  // these two tests drive the hook through a tiny harness element.
+  let harnessLatest!: ReturnType<typeof useGalleryPages>
+  function Harness() {
+    harnessLatest = useGalleryPages(sauce)
+    return createElement("article", { ref: harnessLatest.cardRef })
+  }
+  const activateCard = () =>
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+
+  it("prefetches the page list after ~700 ms of dwell, silently", async () => {
+    vi.useFakeTimers()
+    try {
+      mockPages.mockResolvedValue(pageUrls(3))
+      render(createElement(Harness))
+
+      // Not active yet: no fetch, however long we wait.
+      await act(async () => {
+        vi.advanceTimersByTime(5000)
+      })
+      expect(mockPages).not.toHaveBeenCalled()
+
+      activateCard()
+      // Before the dwell elapses: still no fetch.
+      await act(async () => {
+        vi.advanceTimersByTime(699)
+      })
+      expect(mockPages).not.toHaveBeenCalled()
+
+      // Dwell elapses: the prefetch fires — and stays silent (the
+      // "Loading pages…" signal is for paging presses only).
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(mockPages).toHaveBeenCalledTimes(1)
+      expect(harnessLatest.loadingPages).toBe(false)
+      expect(harnessLatest.totalPages).toBe(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("does not prefetch if the card stops being viewed before the dwell", async () => {
+    vi.useFakeTimers()
+    try {
+      mockPages.mockResolvedValue(pageUrls(3))
+      render(createElement(Harness))
+      activateCard()
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+      })
+      // Scrolled away before 700 ms: the timer is cleared.
+      act(() => {
+        IntersectionObserverStub.latest().trigger([
+          { isIntersecting: false, intersectionRatio: 0 },
+        ])
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(5000)
+      })
+      expect(mockPages).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

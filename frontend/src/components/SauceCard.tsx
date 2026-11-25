@@ -3,6 +3,7 @@ import type { Sauce } from "../types"
 import { useGalleryPages } from "../hooks/useGalleryPages"
 import { useHorizontalSwipe } from "../hooks/useHorizontalSwipe"
 import { useIsSmallScreen } from "../hooks/useIsSmallScreen"
+import { waitForImage } from "../lib/waitForImage"
 import PillButton, { PILL_BASE, PILL_LG } from "./ui/PillButton"
 
 type Props = {
@@ -48,19 +49,92 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
   }
 
   // Page-turn animation direction, derived from the pageIdx delta
-  // during render (the previous-value pattern — no effect lag, so
-  // the incoming page's first frame already carries the class). The
-  // image wrapper below is keyed by currentSrc, so a page change
-  // remounts it and replays the one-shot slide-fade keyframe;
-  // onAnimationEnd disarms the direction, so a later src change
-  // that isn't a page turn can't replay a stale direction. The
-  // animation lives on the wrapper, never the img — the img's own
-  // transform belongs to the blur scale.
+  // during render (the previous-value pattern — no effect lag).
+  // The direction arms the load gate below: when the incoming page
+  // is paintable and commits, its wrapper (keyed by shownSrc)
+  // remounts carrying the slide class for this direction, so the
+  // slide's first frame already has it. onAnimationEnd disarms, so
+  // a later src change that isn't a page turn can't replay a stale
+  // direction. The animation lives on the wrapper, never the img —
+  // the img's own transform belongs to the blur scale.
   const prevPageIdxRef = useRef(pageIdx)
   const pageDirRef = useRef<0 | 1 | -1>(0)
   if (pageIdx !== prevPageIdxRef.current) {
     pageDirRef.current = pageIdx > prevPageIdxRef.current ? 1 : -1
     prevPageIdxRef.current = pageIdx
+  }
+
+  // ---- Load-gated page display -----------------------------------
+  // `currentSrc` is the page the pager WANTS shown; `shownSrc` is
+  // the page actually on screen. A directed turn commits only once
+  // the incoming image is loaded + decoded (waitForImage): the old
+  // instant swap ran the whole 240 ms slide over an <img> that had
+  // not painted yet — on a phone the slide was invisible and the
+  // picture popped in after it ended. The outgoing page stays
+  // mounted underneath during the slide (underSrc), so the slide
+  // always moves a real picture over the old page, never over
+  // black. The wait resolves on error / after 3 s too, so a slow or
+  // broken image still commits — the old behaviour as a floor.
+  const [shownSrc, setShownSrc] = useState(currentSrc)
+  const [underSrc, setUnderSrc] = useState<string | null>(null)
+  // Direction of the slide currently on screen. State, not the ref
+  // above: it must arm exactly at the gated commit render — during
+  // the load wait the OLD wrapper must not pick up the class.
+  const [animDir, setAnimDir] = useState<0 | 1 | -1>(0)
+  const gateTokenRef = useRef(0)
+  const underTimerRef = useRef<number | undefined>(undefined)
+
+  useEffect(() => () => window.clearTimeout(underTimerRef.current), [])
+
+  useEffect(() => {
+    if (currentSrc === shownSrc) return
+    // No direction (e.g. the page-list load swapping firstImageUrl
+    // for pages[0], whose CDN host string can differ): swap at
+    // once, ungated and unanimated, exactly as before the gate.
+    if (!currentSrc || pageDirRef.current === 0) {
+      setShownSrc(currentSrc)
+      return
+    }
+    // Directed turn: hold the current page until the target is
+    // paintable. Latest-target-wins — a superseded load that
+    // resolves late commits nothing. (shownSrc is read here for
+    // the outgoing page but is deliberately not a dependency: the
+    // gate re-arms on target changes only.)
+    const token = ++gateTokenRef.current
+    const outgoing = shownSrc
+    const dir = pageDirRef.current
+    let cancelled = false
+    const commit = () => {
+      if (cancelled || token !== gateTokenRef.current) return
+      window.clearTimeout(underTimerRef.current)
+      setUnderSrc(outgoing)
+      setAnimDir(dir)
+      setShownSrc(currentSrc)
+      // Fallback underlay clear: animationend does not fire when
+      // the animation is disabled (prefers-reduced-motion), so the
+      // underlay must not depend on it. 400 ms outlasts the longest
+      // slide (300 ms on small screens).
+      underTimerRef.current = window.setTimeout(() => {
+        if (token !== gateTokenRef.current) return
+        pageDirRef.current = 0
+        setAnimDir(0)
+        setUnderSrc(null)
+      }, 400)
+    }
+    // waitForImage resolves on load, error, and timeout alike; the
+    // rejection arm is belt-and-braces so a turn can never be
+    // trapped by a failed wait.
+    void waitForImage(currentSrc).then(commit, commit)
+    return () => {
+      cancelled = true
+    }
+  }, [currentSrc])
+
+  const onSlideEnd = () => {
+    pageDirRef.current = 0
+    setAnimDir(0)
+    window.clearTimeout(underTimerRef.current)
+    setUnderSrc(null)
   }
 
   const swipe = useHorizontalSwipe({
@@ -104,22 +178,33 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
 
   return (
     <article ref={cardRef} className="sauce-card relative flex items-center justify-center bg-black overflow-hidden">
-      {currentSrc ? (
+      {/* Outgoing page, kept mounted underneath during a slide so
+          the incoming page slides over a real picture, never over
+          black. Purely visual — hidden from assistive tech. */}
+      {underSrc && underSrc !== shownSrc ? (
+        <div key={`under:${underSrc}`} className="absolute inset-0" aria-hidden={true}>
+          <img
+            src={underSrc}
+            alt=""
+            draggable={false}
+            className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
+          />
+        </div>
+      ) : null}
+      {shownSrc ? (
         <div
-          key={currentSrc}
+          key={shownSrc}
           className={`absolute inset-0 ${
-            pageDirRef.current === 1
+            animDir === 1
               ? "page-anim-next"
-              : pageDirRef.current === -1
+              : animDir === -1
                 ? "page-anim-prev"
                 : ""
           }`}
-          onAnimationEnd={() => {
-            pageDirRef.current = 0
-          }}
+          onAnimationEnd={onSlideEnd}
         >
           <img
-            src={currentSrc}
+            src={shownSrc}
             alt={blurred ? "" : sauce.title}
             aria-hidden={blurred}
             draggable={false}
