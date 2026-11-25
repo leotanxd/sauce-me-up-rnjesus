@@ -364,7 +364,13 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
 
       {/* invisible tap-to-toggle layer (below the buttons); also the
           horizontal-swipe surface — pan-y keeps vertical scrolling
-          native, horizontal drags page the gallery */}
+          native, horizontal drags page the gallery. Deliberately NO
+          focus ring on this layer: it covers the whole card, so a
+          focus-visible ring would frame the entire viewport (Leo
+          reported exactly that as a bug after clicking to unblur and
+          then pressing Space/Enter). It stays a real focusable
+          button — keyboard activation still toggles blur — it just
+          carries no visible ring. Don't re-add one. */}
       <button
         type="button"
         aria-label={blurred ? "Reveal image" : "Blur image"}
@@ -373,7 +379,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
         onPointerMove={swipe.onPointerMove}
         onPointerUp={swipe.onPointerUp}
         onPointerCancel={swipe.onPointerCancel}
-        className="sauce-swipe-layer absolute inset-0 z-[5] cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ember"
+        className="sauce-swipe-layer absolute inset-0 z-[5] cursor-default focus-visible:outline-none"
       />
     </article>
   )

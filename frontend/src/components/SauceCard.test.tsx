@@ -132,6 +132,35 @@ describe("SauceCard title dismiss and swipe suppression", () => {
   })
 })
 
+describe("SauceCard tap layer focus ring", () => {
+  it("carries no focus ring (a ring would frame the whole viewport) but stays a focusable, labelled button", () => {
+    const onToggleBlur = vi.fn()
+    render(
+      <SauceCard
+        sauce={longTitle}
+        blurred={true}
+        onToggleBlur={onToggleBlur}
+        dimmed={false}
+        onToggleDim={() => {}}
+      />,
+    )
+    const tapLayer = screen.getByRole("button", { name: "Reveal image" })
+    // Regression: the tap layer once carried focus-visible ring
+    // classes; after a click focused it, Space/Enter surfaced a
+    // full-screen ember border Leo couldn't dismiss.
+    expect(tapLayer.className).not.toContain("ring-2")
+    expect(tapLayer.className).not.toContain("ring-inset")
+    expect(tapLayer.className).not.toContain("ring-ember")
+    expect(tapLayer.className).toContain("focus-visible:outline-none")
+    // Still a real focusable button: focus lands on it, and
+    // activation (what Space/Enter dispatch) still toggles blur.
+    tapLayer.focus()
+    expect(document.activeElement).toBe(tapLayer)
+    fireEvent.click(tapLayer)
+    expect(onToggleBlur).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe("SauceCard rail contents", () => {
   it("has no Reveal/Blur rail button; Source and page arrows remain", () => {
     renderCard(longTitle)
