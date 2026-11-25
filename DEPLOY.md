@@ -38,6 +38,14 @@ Works on any Docker host (a VPS, Fly.io, Koyeb, Google Cloud Run, …).
 ## First live check
 
 Open the URL, then `https://<your-url>/api/health` should return
-`{"status":"ok"}`. If the feed shows an error with a retry button, the
-backend's upstream calls are failing from that host — check the service
-logs first. (Demo placeholders exist only in development builds.)
+HTTP 200 with a body like
+`{"status":"ok","upstream":{"lastSuccessAt":"2026-01-01T00:00:00Z","upstreamStatus":"ok"}}`.
+The `upstream` block reports the last observed contact with the
+upstream catalogue: `upstreamStatus` is `"ok"` if a call succeeded
+within the last 15 minutes, `"stale"` if it has been longer, and
+`"unknown"` (with `"lastSuccessAt": null`) if this process hasn't
+reached upstream yet. The endpoint never probes upstream itself, so
+`status` stays `"ok"` as long as the app is up. If the feed shows an
+error with a retry button, the backend's upstream calls are failing
+from that host — check the service logs first. (Demo placeholders
+exist only in development builds.)
