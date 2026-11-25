@@ -46,6 +46,29 @@ def test_detail_result_wrapper_is_unwrapped(gallery_detail):
     assert detail.page_count == 3
 
 
+def test_detail_strip_gallery_pages_pass_through_verbatim():
+    # Insurance for the strip (webtoon) rendering fix: the backend
+    # already serves these galleries correctly — the fixture
+    # mirrors gallery 491558's real payload shape, trimmed to 6
+    # pages (two normal 300×420, one 750×400 landscape, three
+    # 720-wide strips up to 720×17404) and listed out of order.
+    # The parser must return every page path in page-number order
+    # and count the raw list — never collapsing or dropping the
+    # strip pages.
+    raw = load_fixture("gallery_detail_strips.json")
+    detail = GalleryDetail.from_detail(raw, 491558)
+    assert detail.page_paths == (
+        "galleries/2798745/1.jpg",
+        "galleries/2798745/2.jpg",
+        "galleries/2798745/3.jpg",
+        "galleries/2798745/4.jpg",
+        "galleries/2798745/5.jpg",
+        "galleries/2798745/6.jpg",
+    )
+    assert detail.page_count == len(raw["pages"]) == 6
+    assert detail.first_media_path() == "galleries/2798745/1.jpg"
+
+
 def test_is_english_verdicts(gallery_detail):
     assert GalleryDetail.from_detail(gallery_detail, 101).is_english is True
 
