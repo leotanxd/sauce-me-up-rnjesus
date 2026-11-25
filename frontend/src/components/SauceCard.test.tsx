@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { Sauce } from "../types"
-import { setSmallScreen } from "../test/setup"
+import { IntersectionObserverStub, setSmallScreen } from "../test/setup"
 
 vi.mock("../lib/api", () => ({
   fetchNextSauce: vi.fn(),
@@ -66,6 +66,46 @@ describe("SauceCard titles on desktop", () => {
     const { container } = renderCard(longTitle)
     expect(screen.getByText(longTitle.title)).not.toBeNull()
     expect(container.querySelector("[aria-expanded]")).toBeNull()
+  })
+})
+
+describe("SauceCard title dismiss and swipe suppression", () => {
+  it("a drag that dismisses an expanded title consumes the suppression flag, so the next tap toggles blur", () => {
+    setSmallScreen(true)
+    const onToggleBlur = vi.fn()
+    render(
+      <SauceCard sauce={longTitle} blurred={true} onToggleBlur={onToggleBlur} dimmed={false} />,
+    )
+    // Make this the active card so the swipe handlers are live.
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+
+    // Expand the condensed title.
+    fireEvent.click(screen.getByRole("button", { name: "One two three four …" }))
+    expect(screen.getByRole("button", { name: "Collapse title" })).not.toBeNull()
+
+    // A drag on the tap layer that travels past the slop but short
+    // of a page turn: no swipe fires, but the hook sets the
+    // suppression flag for the click the browser fires on release.
+    const tapLayer = screen.getByRole("button", { name: "Reveal image" })
+    const pointer = { pointerId: 1, pointerType: "touch", isPrimary: true }
+    fireEvent.pointerDown(tapLayer, { ...pointer, clientX: 200, clientY: 100 })
+    fireEvent.pointerMove(tapLayer, { ...pointer, clientX: 185, clientY: 101 })
+    fireEvent.pointerUp(tapLayer, { ...pointer, clientX: 170, clientY: 101 })
+    fireEvent.click(tapLayer)
+
+    // The release click dismissed the title and did not toggle blur…
+    expect(screen.getByRole("button", { name: "One two three four …" })).not.toBeNull()
+    expect(screen.queryByText(longTitle.title)).toBeNull()
+    expect(onToggleBlur).not.toHaveBeenCalled()
+
+    // …and the dismiss branch consumed the flag, so the next plain
+    // tap reaches the blur toggle instead of being swallowed.
+    fireEvent.click(tapLayer)
+    expect(onToggleBlur).toHaveBeenCalledTimes(1)
   })
 })
 

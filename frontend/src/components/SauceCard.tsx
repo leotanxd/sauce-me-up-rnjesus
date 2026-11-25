@@ -52,18 +52,27 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
     onSwipe: (delta) => page(delta),
   })
 
+  // Read + clear the swipe hook's suppression flag; reports whether
+  // a drag set it (meaning this click is a drag's tail, not a tap).
+  const consumeSuppression = (): boolean => {
+    const suppressed = swipe.suppressClickRef.current
+    swipe.suppressClickRef.current = false
+    return suppressed
+  }
+
   // Tap-layer click order matters: an expanded title consumes the
   // tap as a dismiss; a completed swipe's release-click is swallowed
   // by the suppression flag; anything else is a plain tap → blur.
   const onTapLayerClick = () => {
     if (titleExpanded) {
       setTitleExpanded(false)
+      // Consume the flag here too: a drag whose release click
+      // dismisses the title must not leave the flag set, or it
+      // would swallow the next genuine tap on this card.
+      consumeSuppression()
       return
     }
-    if (swipe.suppressClickRef.current) {
-      swipe.suppressClickRef.current = false
-      return
-    }
+    if (consumeSuppression()) return
     onToggleBlur()
   }
 
