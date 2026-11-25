@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { useHorizontalSwipe } from "./useHorizontalSwipe"
 
 let suppressClickRef!: { current: boolean }
+let swipeApi!: ReturnType<typeof useHorizontalSwipe>
 
 function Harness({
   enabled = true,
@@ -13,6 +14,7 @@ function Harness({
 }) {
   const swipe = useHorizontalSwipe({ enabled, onSwipe })
   suppressClickRef = swipe.suppressClickRef
+  swipeApi = swipe
   return (
     <div
       data-testid="surface"
@@ -130,5 +132,21 @@ describe("useHorizontalSwipe", () => {
     fireEvent.pointerUp(el, { ...pointer, clientX: 200, clientY: 100 })
     expect(onSwipe).not.toHaveBeenCalled()
     expect(suppressClickRef.current).toBe(false)
+  })
+
+  it("cancelGesture() mid-gesture: no onSwipe on release, and the suppression flag is set", () => {
+    const onSwipe = vi.fn()
+    render(<Harness onSwipe={onSwipe} />)
+    const el = screen.getByTestId("surface")
+    fireEvent.pointerDown(el, { ...pointer, clientX: 200, clientY: 100 })
+    fireEvent.pointerMove(el, { ...pointer, clientX: 150, clientY: 101 })
+    // A second pointer lands (a pinch begins): the zoom hook takes
+    // over and cancels this gesture. The release that follows is a
+    // two-finger tail, never a tap — hence the flag, unlike
+    // pointercancel (after which no click follows at all).
+    swipeApi.cancelGesture()
+    fireEvent.pointerUp(el, { ...pointer, clientX: 120, clientY: 101 })
+    expect(onSwipe).not.toHaveBeenCalled()
+    expect(suppressClickRef.current).toBe(true)
   })
 })

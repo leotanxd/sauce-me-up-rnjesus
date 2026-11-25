@@ -357,10 +357,12 @@ describe("SauceCard page-turn animation (load-gated)", () => {
     })
 
   // During a slide there are two imgs: the outgoing underlay first,
-  // the shown (incoming) page last.
+  // the shown (incoming) page last. The shown img's parent is the
+  // zoom layer; the slide wrapper (which carries the page-anim
+  // classes) is one level above it.
   const imgs = (container: HTMLElement) => Array.from(container.querySelectorAll("img"))
   const shownImg = (container: HTMLElement) => imgs(container).at(-1)!
-  const shownWrapper = (container: HTMLElement) => shownImg(container).parentElement!
+  const shownWrapper = (container: HTMLElement) => shownImg(container).parentElement!.parentElement!
 
   beforeEach(() => {
     mockWaitForImage.mockReset()
@@ -707,6 +709,8 @@ describe("SauceCard strip (webtoon) pages", () => {
     const scroller = container.querySelector(".strip-scroll")
     expect(scroller).not.toBeNull()
     expect(scroller!.className).toContain("overflow-y-auto")
+    // Image territory: the UI zoom never applies to the scroller.
+    expect(scroller!.className).not.toContain("ui-zoom")
     const stripImg = scroller!.querySelector("img")!
     expect(stripImg.getAttribute("src")).toBe(stripPages[1])
     expect(stripImg.className).toContain("w-full")
@@ -740,5 +744,135 @@ describe("SauceCard strip (webtoon) pages", () => {
     expect(shownImg().getAttribute("src")).toBe(stripPages[2])
     expect(shownImg().className).toContain("object-contain")
     expect(screen.getByRole("button", { name: "Reveal image" }).tagName).toBe("BUTTON")
+  })
+})
+
+describe("SauceCard image zoom", () => {
+  const zoomPages = [
+    "https://img.example/7/1.jpg",
+    "https://img.example/7/2.jpg",
+    "https://img.example/7/3.jpg",
+  ]
+  const pointer = { pointerId: 1, pointerType: "touch", isPrimary: true }
+
+  beforeEach(() => {
+    mockWaitForImage.mockReset()
+    mockWaitForImage.mockResolvedValue(undefined)
+    vi.mocked(fetchSaucePages).mockResolvedValue(zoomPages)
+  })
+
+  const activate = () =>
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+
+  function renderZoomCard(onToggleBlur = vi.fn()) {
+    const utils = render(
+      <SauceCard
+        sauce={longTitle}
+        blurred={true}
+        onToggleBlur={onToggleBlur}
+        dimmed={false}
+        onToggleDim={() => {}}
+      />,
+    )
+    activate()
+    return utils
+  }
+
+  const tapLayer = () => screen.getByRole("button", { name: "Reveal image" })
+
+  const tap = (el: HTMLElement, x = 200, y = 400) => {
+    fireEvent.pointerDown(el, { ...pointer, clientX: x, clientY: y })
+    fireEvent.pointerUp(el, { ...pointer, clientX: x, clientY: y })
+    fireEvent.click(el)
+  }
+
+  const doubleTap = (el: HTMLElement) => {
+    tap(el)
+    tap(el)
+  }
+
+  const zoomLayer = (container: HTMLElement) =>
+    container.querySelector(".sauce-zoom-layer") as HTMLElement
+
+  it("regression: a plain tap still toggles blur and a horizontal swipe still pages, with the zoom hook mounted", async () => {
+    const onToggleBlur = vi.fn()
+    const { container } = renderZoomCard(onToggleBlur)
+    const region = container.querySelector("[role='status']")!
+    expect(region.textContent).toBe("Page 1 of 12")
+
+    tap(tapLayer())
+    expect(onToggleBlur).toHaveBeenCalledTimes(1)
+
+    const el = tapLayer()
+    fireEvent.pointerDown(el, { ...pointer, clientX: 200, clientY: 100 })
+    fireEvent.pointerMove(el, { ...pointer, clientX: 150, clientY: 101 })
+    fireEvent.pointerUp(el, { ...pointer, clientX: 120, clientY: 101 })
+    fireEvent.click(el)
+    await act(async () => {})
+    // (Total drops 12 → 3: the fetched page list replaces the
+    // served pageCount once paging loads it.)
+    expect(region.textContent).toBe("Page 2 of 3")
+    // The swipe's click was suppressed by the swipe flag, not the zoom.
+    expect(onToggleBlur).toHaveBeenCalledTimes(1)
+  })
+
+  it("chrome isolation: zooming transforms only the zoom layer — header, column, Dim, caption and the img itself carry no transform", () => {
+    const { container } = renderZoomCard()
+    doubleTap(tapLayer())
+
+    const layer = zoomLayer(container)
+    expect(layer.style.transform).toContain("scale(2.5)")
+    // The img's own transform stays the blur scale's business (a
+    // class, never an inline zoom transform).
+    const img = layer.querySelector("img")!
+    expect(img.style.transform).toBe("")
+
+    const chrome = [
+      container.querySelector("header"),
+      container.querySelector("footer"),
+      screen.getByRole("button", { name: "Dim: OFF" }).parentElement,
+      screen.getByRole("button", { name: "Dim: OFF" }),
+      screen.getByRole("link", { name: /Source/ }).parentElement,
+    ]
+    for (const el of chrome) {
+      expect(el).not.toBeNull()
+      expect((el as HTMLElement).style.transform).toBe("")
+      expect((el as HTMLElement).className).not.toContain("sauce-zoom-layer")
+    }
+    // Exactly one zoom layer in the card.
+    expect(container.querySelectorAll(".sauce-zoom-layer")).toHaveLength(1)
+  })
+
+  it("a page turn resets the zoom — the new page arrives at scale 1", async () => {
+    const { container } = renderZoomCard()
+    doubleTap(tapLayer())
+    expect(zoomLayer(container).style.transform).toContain("scale(2.5)")
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    expect(zoomLayer(container).style.transform).toContain("scale(1)")
+  })
+
+  it("while zoomed, a horizontal drag pans instead of paging, and the tap layer's touch-action is none", async () => {
+    const { container } = renderZoomCard()
+    const region = container.querySelector("[role='status']")!
+    const el = tapLayer()
+    expect(el.style.touchAction).toBe("")
+
+    doubleTap(el)
+    expect(zoomLayer(container).style.transform).toContain("scale(2.5)")
+    expect(el.style.touchAction).toBe("none")
+
+    fireEvent.pointerDown(el, { ...pointer, clientX: 200, clientY: 400 })
+    fireEvent.pointerMove(el, { ...pointer, clientX: 150, clientY: 401 })
+    fireEvent.pointerUp(el, { ...pointer, clientX: 120, clientY: 401 })
+    fireEvent.click(el)
+    await act(async () => {})
+    expect(region.textContent).toBe("Page 1 of 12")
   })
 })

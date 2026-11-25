@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import SauceCard from "./SauceCard"
 import LoadingGirl from "./LoadingGirl"
 import ModeToggle from "./ModeToggle"
 import PillButton from "./ui/PillButton"
 import { useSauceFeed } from "../hooks/useSauceFeed"
+import { useUiZoom } from "../hooks/useUiZoom"
 
 /**
  * The scroll-snap sauce feed. All state and behaviour (loading,
@@ -30,6 +31,12 @@ export default function SauceFeed() {
     sentinelRef,
     feedRef,
   } = useSauceFeed()
+
+  // UI zoom (Ctrl+Shift+wheel): scales the chrome groups that opt
+  // in via .ui-zoom, driven by this wrapper's --ui-zoom variable.
+  // The state lives here — outside the keyed <main> — so it
+  // survives mode switches; the hook persists it across reloads.
+  const { uiScale, uiZoomRef } = useUiZoom()
 
   // ---- Live region (polite): mode switches and load errors, for
   // screen-reader users. Mode and error share the one region — the
@@ -130,7 +137,11 @@ export default function SauceFeed() {
   }`
 
   return (
-    <div className="relative bg-black">
+    <div
+      className="relative bg-black"
+      ref={uiZoomRef}
+      style={{ "--ui-zoom": uiScale } as CSSProperties}
+    >
       {liveRegion}
       <div className={chromeClass}>
         <ModeToggle popular={popular} onSwitch={handleSwitch} />
@@ -150,7 +161,7 @@ export default function SauceFeed() {
           alert, not viewing chrome. */}
       {error && !loadingMore && (
         <div className="fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] inset-x-0 z-20 flex justify-center">
-          <div className="flex items-center gap-3 rounded-full bg-white/10 backdrop-blur px-2 py-1 border border-white/20">
+          <div className="ui-zoom flex items-center gap-3 rounded-full bg-white/10 backdrop-blur px-2 py-1 border border-white/20">
             <p className="text-xs text-white">{error}</p>
             <button
               type="button"

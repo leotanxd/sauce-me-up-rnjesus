@@ -111,11 +111,26 @@ export function useHorizontalSwipe({ enabled, onSwipe }: Options) {
     gestureRef.current = null // browser took the gesture over — abort
   }
 
+  /**
+   * Abort any in-flight gesture and suppress the click that will
+   * follow on release. Used when a second pointer lands and the
+   * touch becomes a pinch (the image-zoom hook takes over): a
+   * two-finger touch is never a tap, so its release click must not
+   * toggle blur or page. Unlike pointercancel — after which no
+   * click follows — a pinch's final release DOES fire one, hence
+   * setting the flag unconditionally here.
+   */
+  const cancelGesture = () => {
+    gestureRef.current = null
+    suppressClickRef.current = true
+  }
+
   return {
     onPointerDown,
     onPointerMove,
     onPointerUp,
     onPointerCancel,
+    cancelGesture,
     suppressClickRef,
   }
 }

@@ -75,6 +75,30 @@ body {
 .page-anim-next { animation: page-in-next 240ms cubic-bezier(0.22, 0.61, 0.36, 1); }
 .page-anim-prev { animation: page-in-prev 240ms cubic-bezier(0.22, 0.61, 0.36, 1); }
 
+/* Image zoom layer: sits inside the slide wrapper around the img
+   and is the ONLY element the image-zoom transform touches (the
+   wrapper's transform belongs to the slide keyframes above, the
+   img's to the blur scale). No transition at base — a live pinch
+   or pan must track the fingers 1:1; discrete changes (double-tap,
+   wheel, keys, reset) add .is-animating for a short ease. The
+   reduced-motion block below collapses that transition like every
+   other. */
+.sauce-zoom-layer { }
+.sauce-zoom-layer.is-animating { transition: transform 200ms ease; }
+
+/* UI zoom (Ctrl+Shift+wheel): the CSS zoom property applied per
+   chrome group — header, right column, caption, error panels,
+   ModeToggle, the feed error bar. `zoom` is a layout zoom: the
+   element's size, padding and positioning offsets all resolve at
+   the scaled value, so groups scale rigidly and proportionally
+   (the rail↔Dim gap scales with them and can never overlap), and
+   hit-testing follows the visual box exactly. The value comes
+   from SauceFeed's wrapper via --ui-zoom; unset (the empty/loading
+   screen) it resolves to 1. Never applied to the img, the zoom
+   layer, the slide wrapper, the strip scroller, the tap layer, or
+   any scroll/snap geometry. */
+.ui-zoom { zoom: var(--ui-zoom, 1); }
+
 /* Mode-switch entrance: the incoming feed (or switch-loading
    screen) fades/rises in instead of hard-cutting. The outgoing
    fade is a SauceFeed-side transition on the same <main>; this

@@ -5,6 +5,8 @@ the currently popular ones, if you'd rather. Every visit serves up
 different galleries, one full-screen card at a time — no account, no
 setup, just scroll.
 
+> As of 2026, November 25th, this project is currently being released as a public beta prototype, and if for some reason people actually start using this, then I will update the website. Otherwise, I only made this project just for the fun of it, and I might not update it, unless I feel like updating it.
+
 ## ▶ Try it live
 
 **[https://sauce-me-up-rnjesus.onrender.com](https://sauce-me-up-rnjesus.onrender.com)**
@@ -24,6 +26,11 @@ it's working.)
   as you approach the end, so there's always another card.
 - **Blur on by default** — every image starts blurred; tap the image
   to show it.
+- **Image-only zoom** — pinch, double-tap, `Ctrl`+scroll or the
+  `+`/`−` keys zoom the picture alone; every button and caption
+  stays its normal size. `Ctrl`+`Shift`+scroll does the reverse —
+  it scales the UI only — and that level is remembered between
+  visits.
 - **In-gallery paging three ways** — the ‹ › buttons, the ← → arrow
   keys, or a horizontal swipe on the image.
 - **Page X of Y, always shown** — every card displays its page
@@ -51,6 +58,12 @@ it's working.)
 | `→` arrow key (or the `›` button) | Next page of the sauce you're viewing |
 | `←` arrow key (or the `‹` button) | Previous page of that sauce |
 | Tap the image | Toggle the blur |
+| Pinch on the image, or `Ctrl`+scroll / trackpad pinch | Zoom the image only — buttons and text keep their size |
+| Double-tap the image | Toggle 2.5× image zoom, centred where you tapped |
+| Drag while zoomed | Pan around the zoomed image |
+| `+` / `−` keys | Zoom the image in / out; `0` or `Esc` resets the image zoom |
+| `Ctrl`+`Shift`+scroll | Zoom the buttons and text only (the UI), not the image |
+| `Ctrl`+`Shift`+`0` | Reset the UI zoom |
 | **Dim: ON/OFF** toggle (right side) | Hide / show all buttons and text |
 | Tap the title | Expand a condensed title; tap again to collapse |
 | **↗ Source** button | Open the gallery at the source site |
@@ -70,7 +83,9 @@ Things to know:
   end of the feed), a waiting animation plays in the center of the
   page.
 - Nothing persists across reloads — blur and dim reset, and
-  refreshing starts a fresh feed with different sauces.
+  refreshing starts a fresh feed with different sauces. The one
+  exception is the UI zoom level (`Ctrl`+`Shift`+scroll), which is
+  remembered between visits.
 
 ## Architecture
 
@@ -110,8 +125,9 @@ service.
     health checks cost no quota.
 - **`frontend/`** — Vite + React + Tailwind. All state lives in
   hooks — `useSauceFeed` (feed, modes, blur, dim), `useGalleryPages`
-  (per-card paging), `useHorizontalSwipe` (swipe paging) — and the
-  components are layout only. The feed windows rendering to the
+  (per-card paging), `useHorizontalSwipe` (swipe paging),
+  `useImageZoom` (per-card image-only zoom) and `useUiZoom`
+  (feed-level UI zoom) — and the components are layout only. The feed windows rendering to the
   active card ±2.
 
 Project layout:

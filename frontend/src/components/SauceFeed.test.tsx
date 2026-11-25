@@ -166,3 +166,97 @@ describe("ModeToggle focus ring", () => {
     expect(random.className).not.toContain("focus-visible:ring-white")
   })
 })
+
+describe("SauceFeed UI zoom", () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  afterEach(() => {
+    window.localStorage.clear()
+  })
+
+  const wrapperOf = (container: HTMLElement) =>
+    container.querySelector("main")!.parentElement as HTMLElement
+
+  it("publishes --ui-zoom on the wrapper and marks exactly the chrome groups .ui-zoom", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    const { container } = render(<SauceFeed />)
+    await waitFor(() => expect(dimOffButtons()).toHaveLength(3))
+
+    const wrapper = wrapperOf(container)
+    expect(wrapper.style.getPropertyValue("--ui-zoom")).toBe("1")
+
+    // The scaled set: card header, the right column (rail + Dim +
+    // title/# as one unit), caption footer, ModeToggle root.
+    expect(container.querySelector("header")!.className).toContain("ui-zoom")
+    expect(container.querySelector("footer")!.className).toContain("ui-zoom")
+    expect(dimOffButtons()[0].parentElement!.className).toContain("ui-zoom")
+    expect(screen.getByRole("group", { name: "Feed mode" }).className).toContain("ui-zoom")
+
+    // Never scaled: the artwork subtree, the tap layer, the card
+    // and feed geometry, placeholders.
+    const img = container.querySelector("img")!
+    expect(img.className).not.toContain("ui-zoom")
+    expect((img as HTMLElement).style.getPropertyValue("zoom")).toBe("")
+    const zoomLayer = container.querySelector(".sauce-zoom-layer")!
+    expect(zoomLayer.className).not.toContain("ui-zoom")
+    const slideWrapper = zoomLayer.parentElement!
+    expect(slideWrapper.className).not.toContain("ui-zoom")
+    expect(screen.getAllByRole("button", { name: "Reveal image" })[0].className).not.toContain("ui-zoom")
+    expect(container.querySelector("article")!.className).not.toContain("ui-zoom")
+    expect(container.querySelector("main")!.className).not.toContain("ui-zoom")
+  })
+
+  it("Ctrl+Shift+wheel over the feed steps --ui-zoom; Ctrl+wheel leaves it alone", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    const { container } = render(<SauceFeed />)
+    await waitFor(() => expect(dimOffButtons()).toHaveLength(3))
+    const wrapper = wrapperOf(container)
+
+    const uiEvt = new WheelEvent("wheel", {
+      ctrlKey: true,
+      shiftKey: true,
+      deltaY: -100,
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      wrapper.dispatchEvent(uiEvt)
+    })
+    expect(uiEvt.defaultPrevented).toBe(true)
+    expect(parseFloat(wrapper.style.getPropertyValue("--ui-zoom"))).toBeCloseTo(1.16, 2)
+
+    const imgEvt = new WheelEvent("wheel", {
+      ctrlKey: true,
+      deltaY: -100,
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      wrapper.dispatchEvent(imgEvt)
+    })
+    expect(parseFloat(wrapper.style.getPropertyValue("--ui-zoom"))).toBeCloseTo(1.16, 2)
+  })
+
+  it("the mid-feed error bar's pill carries ui-zoom (its fixed wrapper does not scale)", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    render(<SauceFeed />)
+    await waitFor(() => expect(dimOffButtons()).toHaveLength(3))
+
+    // Fail the next top-up: the error bar appears.
+    mockBatch.mockRejectedValue(new Error("backend down"))
+    const sentinelObserver = IntersectionObserverStub.instances.find((o) =>
+      [...o.elements].some((el) => (el as HTMLElement).className.includes("h-px")),
+    )
+    expect(sentinelObserver).toBeTruthy()
+    await act(async () => {
+      sentinelObserver!.trigger([{ isIntersecting: true, intersectionRatio: 1 }])
+    })
+
+    const retry = await screen.findByRole("button", { name: "Retry" })
+    const pill = retry.parentElement!
+    expect(pill.className).toContain("ui-zoom")
+    expect(pill.parentElement!.className).not.toContain("ui-zoom")
+  })
+})

@@ -3,11 +3,13 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type SyntheticEvent as ReactSyntheticEvent,
 } from "react"
 import type { Sauce } from "../types"
 import { useGalleryPages } from "../hooks/useGalleryPages"
 import { useHorizontalSwipe } from "../hooks/useHorizontalSwipe"
+import { useImageZoom } from "../hooks/useImageZoom"
 import { isStripImage } from "../lib/aspect"
 import { loadImageMeta } from "../lib/loadImageMeta"
 import { waitForImage } from "../lib/waitForImage"
@@ -39,20 +41,29 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
     useGalleryPages(sauce)
   const [titleExpanded, setTitleExpanded] = useState(false)
 
-  // Any page turn collapses an expanded title. Buttons and swipe go
-  // through `page` below; keyboard paging happens inside
-  // useGalleryPages and bypasses it, so cover it via pageIdx.
+  // Any page turn collapses an expanded title and resets the
+  // image zoom. Buttons and swipe go through `page` below;
+  // keyboard paging happens inside useGalleryPages and bypasses
+  // it, so cover it via pageIdx. (The zoom hook is instantiated
+  // further down; these callbacks run after render, so the
+  // reference is live by then.)
   useEffect(() => {
     setTitleExpanded(false)
+    zoom.reset()
   }, [pageIdx])
   // Scrolling away collapses too (unmount destroys the state anyway,
-  // so a card always comes back collapsed).
+  // so a card always comes back collapsed) — and a card scrolled
+  // away and back is unzoomed.
   useEffect(() => {
-    if (!isActive) setTitleExpanded(false)
+    if (!isActive) {
+      setTitleExpanded(false)
+      zoom.reset()
+    }
   }, [isActive])
 
   const page = (delta: number) => {
     setTitleExpanded(false)
+    zoom.reset()
     void goToPage(delta)
   }
 
@@ -162,6 +173,8 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
 
   const retryImage = () => {
     setImgError(false)
+    // A fresh attempt starts unzoomed too.
+    zoom.reset()
     // No slide on retry: clear any armed direction/underlay first,
     // then remount the img via the nonce in its wrapper key — a
     // fresh element re-requests an errored resource. If it fails
@@ -212,10 +225,48 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
 
   const stripMode = shownMeta !== null && isStripImage(shownMeta.width, shownMeta.height)
 
-  const swipe = useHorizontalSwipe({
+  // ---- Image zoom --------------------------------------------------
+  // Per-card zoom of the artwork only (pinch / double-tap /
+  // Ctrl+wheel / +−0Esc keys; drag pans while zoomed). The transform
+  // lands on a dedicated layer inside the slide wrapper — never the
+  // img (blur owns its transform), never the wrapper (the slide
+  // keyframes own its), and never any chrome. The zoom hook is
+  // created before the swipe hook because the swipe's enabled flag
+  // depends on the zoom state; the pinch → cancel-swipe wire
+  // therefore goes through a ref.
+  const swipeCancelRef = useRef<() => void>(() => {})
+  const zoom = useImageZoom({
     enabled: isActive,
+    onPinchStart: () => swipeCancelRef.current(),
+  })
+
+  const swipe = useHorizontalSwipe({
+    // Inert while zoomed: a drag then pans the image (the zoom
+    // hook owns the pointer stream) instead of paging.
+    enabled: isActive && !zoom.isZoomed,
     onSwipe: (delta) => page(delta),
   })
+  swipeCancelRef.current = swipe.cancelGesture
+
+  // Pointer handlers compose zoom-first, then swipe: on a second
+  // pointer the zoom hook starts the pinch and cancels the swipe
+  // gesture before the swipe hook can act on that pointer.
+  const onSurfacePointerDown = (e: ReactPointerEvent<HTMLElement>) => {
+    zoom.handlers.onPointerDown(e)
+    swipe.onPointerDown(e)
+  }
+  const onSurfacePointerMove = (e: ReactPointerEvent<HTMLElement>) => {
+    zoom.handlers.onPointerMove(e)
+    swipe.onPointerMove(e)
+  }
+  const onSurfacePointerUp = (e: ReactPointerEvent<HTMLElement>) => {
+    zoom.handlers.onPointerUp(e)
+    swipe.onPointerUp(e)
+  }
+  const onSurfacePointerCancel = (e: ReactPointerEvent<HTMLElement>) => {
+    zoom.handlers.onPointerCancel(e)
+    swipe.onPointerCancel(e)
+  }
 
   // Read + clear the swipe hook's suppression flag; reports whether
   // a drag set it (meaning this click is a drag's tail, not a tap).
@@ -228,16 +279,24 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
   // Tap-layer click order matters: an expanded title consumes the
   // tap as a dismiss; a completed swipe's release-click is swallowed
   // by the suppression flag; anything else is a plain tap → blur.
+  // Whichever branch runs, BOTH suppression flags (swipe and zoom)
+  // are read + cleared, so neither can leak into the next genuine
+  // tap on this card.
   const onTapLayerClick = () => {
     if (titleExpanded) {
       setTitleExpanded(false)
-      // Consume the flag here too: a drag whose release click
-      // dismisses the title must not leave the flag set, or it
+      // Consume the flags here too: a drag whose release click
+      // dismisses the title must not leave a flag set, or it
       // would swallow the next genuine tap on this card.
       consumeSuppression()
+      zoom.consumeSuppression()
       return
     }
-    if (consumeSuppression()) return
+    if (consumeSuppression()) {
+      zoom.consumeSuppression()
+      return
+    }
+    if (zoom.consumeSuppression()) return
     onToggleBlur()
   }
 
@@ -327,15 +386,26 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
               />
             </div>
           ) : (
-            <img
-              src={shownSrc}
-              alt={blurred ? "" : sauce.title}
-              aria-hidden={blurred}
-              draggable={false}
-              onLoad={onShownImgLoad}
-              onError={() => setImgError(true)}
-              className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
-            />
+            /* Normal page: the img rides inside the zoom layer —
+               the one element the image zoom transform may touch.
+               It sits between the slide wrapper (whose keyframes
+               own its transform) and the img (whose transform is
+               the blur scale), so slide, blur and zoom compose
+               without ever sharing an element. */
+            <div
+              className={`sauce-zoom-layer absolute inset-0${zoom.animating ? " is-animating" : ""}`}
+              style={zoom.zoomStyle}
+            >
+              <img
+                src={shownSrc}
+                alt={blurred ? "" : sauce.title}
+                aria-hidden={blurred}
+                draggable={false}
+                onLoad={onShownImgLoad}
+                onError={() => setImgError(true)}
+                className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
+              />
+            </div>
           )}
         </div>
       ) : (
@@ -359,7 +429,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
           panel itself captures clicks. Not dimmed (see above). */}
       {imgError && shownSrc ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-          <div className="pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border border-white/15 bg-black/85 backdrop-blur px-6 py-5">
+          <div className="ui-zoom pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border border-white/15 bg-black/85 backdrop-blur px-6 py-5">
             <p className="text-sm text-white">This page didn't load.</p>
             <PillButton onClick={retryImage} aria-label="Retry loading this page" className="px-5 py-3 text-sm font-medium">
               Retry
@@ -371,7 +441,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
       {/* top bar — gradient backing so the text never sits bare
           over variable artwork (mirrors the caption's). Brand
           only: the sauce #number lives in the right column now. */}
-      <header className={`absolute top-0 inset-x-0 z-10 flex items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm bg-gradient-to-b from-black/60 to-transparent ${chromeClass}`}>
+      <header className={`ui-zoom absolute top-0 inset-x-0 z-10 flex items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm bg-gradient-to-b from-black/60 to-transparent ${chromeClass}`}>
         <span className="font-semibold tracking-wide">Sauce Me Up, RNJesus</span>
       </header>
 
@@ -392,7 +462,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
           does not move a pixel when dim toggles. z-20 keeps the
           column above the strip scroller (z-[6]) and the tap
           layer (z-[5]). */}
-      <div className="absolute right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1rem,env(safe-area-inset-bottom))] z-20 flex flex-col items-end gap-4 [@media(max-height:560px)]:gap-2">
+      <div className="ui-zoom absolute right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1rem,env(safe-area-inset-bottom))] z-20 flex flex-col items-end gap-4 [@media(max-height:560px)]:gap-2">
         {/* #number + title block (chrome). The expanded title
             panel grows upward in-flow from here — its max-height
             caps keep its top below the ModeToggle: the panel's
@@ -472,7 +542,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
           the right column now. pr-40 reserves the corner rail's
           footprint (16px offset + 136px arrows row = 152px) so
           the line never runs under the arrows on narrow screens. */}
-      <footer className={`absolute bottom-0 inset-x-0 z-10 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black/80 to-transparent ${chromeClass}`}>
+      <footer className={`ui-zoom absolute bottom-0 inset-x-0 z-10 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black/80 to-transparent ${chromeClass}`}>
         <p className="text-xs text-neutral-400 pr-40">
           {loadingPages
             ? "Loading pages…"
@@ -498,12 +568,20 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
       {!stripMode ? (
         <button
           type="button"
+          ref={zoom.attachWheel}
           aria-label={blurred ? "Reveal image" : "Blur image"}
           onClick={onTapLayerClick}
-          onPointerDown={swipe.onPointerDown}
-          onPointerMove={swipe.onPointerMove}
-          onPointerUp={swipe.onPointerUp}
-          onPointerCancel={swipe.onPointerCancel}
+          onPointerDown={onSurfacePointerDown}
+          onPointerMove={onSurfacePointerMove}
+          onPointerUp={onSurfacePointerUp}
+          onPointerCancel={onSurfacePointerCancel}
+          // While zoomed, drags must stream to the zoom hook's pan
+          // instead of becoming native feed scroll: touch-action
+          // none overrides the .sauce-swipe-layer pan-y rule. At
+          // scale 1 the inline style is absent and pan-y behaviour
+          // is exactly as before. (The ref above also anchors the
+          // zoom hook's native Ctrl+wheel / iOS-gesture listeners.)
+          style={{ touchAction: zoom.isZoomed ? "none" : undefined }}
           className="sauce-swipe-layer absolute inset-0 z-[5] cursor-default focus-visible:outline-none"
         />
       ) : null}

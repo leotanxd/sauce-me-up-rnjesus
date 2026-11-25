@@ -17,7 +17,7 @@ export default function ModeToggle({ popular, onSwitch }: Props) {
   const ringSelected = `${ringBase} focus-visible:ring-white`
   return (
     <div
-      className="fixed top-[max(0.75rem,env(safe-area-inset-top))] left-1/2 -translate-x-1/2 z-30 flex rounded-full bg-white/10 backdrop-blur border border-white/20 overflow-hidden"
+      className="ui-zoom fixed top-[max(0.75rem,env(safe-area-inset-top))] left-1/2 -translate-x-1/2 z-30 flex rounded-full bg-white/10 backdrop-blur border border-white/20 overflow-hidden"
       role="group"
       aria-label="Feed mode"
     >
