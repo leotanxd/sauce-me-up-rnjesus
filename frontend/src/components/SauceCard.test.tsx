@@ -344,6 +344,55 @@ describe("SauceCard page-turn animation (load-gated)", () => {
   })
 })
 
+describe("SauceCard image error state", () => {
+  beforeEach(() => {
+    mockWaitForImage.mockReset()
+    mockWaitForImage.mockResolvedValue(undefined)
+    vi.mocked(fetchSaucePages).mockResolvedValue([
+      "https://img.example/7/1.jpg",
+      "https://img.example/7/2.jpg",
+      "https://img.example/7/3.jpg",
+    ])
+  })
+
+  it("shows a retry panel when the shown image fails, and retry remounts the img", () => {
+    const { container } = renderCard(longTitle)
+    expect(screen.queryByText("This page didn't load.")).toBeNull()
+
+    const img = container.querySelector("img")!
+    fireEvent.error(img)
+    expect(screen.getByText("This page didn't load.")).not.toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry loading this page" }))
+    expect(screen.queryByText("This page didn't load.")).toBeNull()
+    // A fresh img element for the same page: the remount is what
+    // re-requests an errored resource.
+    const remounted = container.querySelector("img")!
+    expect(remounted).not.toBe(img)
+    expect(remounted.getAttribute("src")).toBe(longTitle.firstImageUrl)
+
+    // If it fails again, the panel comes back.
+    fireEvent.error(remounted)
+    expect(screen.getByText("This page didn't load.")).not.toBeNull()
+  })
+
+  it("clears the error state when the page changes", async () => {
+    const { container } = renderCard(longTitle)
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+    fireEvent.error(container.querySelector("img")!)
+    expect(screen.getByText("This page didn't load.")).not.toBeNull()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    expect(screen.queryByText("This page didn't load.")).toBeNull()
+  })
+})
+
 describe("SauceCard page live region and arrow boundaries", () => {
   const threePages = [
     "https://img.example/7/1.jpg",
@@ -380,4 +429,21 @@ describe("SauceCard page live region and arrow boundaries", () => {
     expect(region.textContent).toBe("Page 2 of 3")
   })
 
+  it("disables Prev on the first page and Next on the last page", async () => {
+    renderCard(threePager)
+    activate()
+    const prev = screen.getByRole("button", { name: "Previous page" }) as HTMLButtonElement
+    const next = screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement
+    expect(prev.disabled).toBe(true)
+    expect(next.disabled).toBe(false)
+
+    await act(async () => {
+      fireEvent.click(next)
+    })
+    await act(async () => {
+      fireEvent.click(next)
+    })
+    expect(prev.disabled).toBe(false)
+    expect(next.disabled).toBe(true)
+  })
 })

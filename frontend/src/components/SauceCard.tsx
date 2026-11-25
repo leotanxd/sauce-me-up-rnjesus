@@ -137,6 +137,31 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
     setUnderSrc(null)
   }
 
+  // ---- Image error state ------------------------------------------
+  // The load gate resolves on error too (a broken page still
+  // commits, as a floor), but the shown <img> itself can fail —
+  // CDN hiccup, dead host. Without this the card is a broken image
+  // over black with no explanation and no way out. The panel is an
+  // actionable alert, so it renders outside the dimmed chrome (the
+  // feed-level error bar sets the same precedent).
+  const [imgError, setImgError] = useState(false)
+  const [retryNonce, setRetryNonce] = useState(0)
+  // A page change is a fresh image: any error state belongs to the
+  // page that raised it.
+  useEffect(() => {
+    setImgError(false)
+  }, [shownSrc])
+
+  const retryImage = () => {
+    setImgError(false)
+    // No slide on retry: clear any armed direction/underlay first,
+    // then remount the img via the nonce in its wrapper key — a
+    // fresh element re-requests an errored resource. If it fails
+    // again, onError re-raises the panel.
+    onSlideEnd()
+    setRetryNonce((n) => n + 1)
+  }
+
   const swipe = useHorizontalSwipe({
     enabled: isActive,
     onSwipe: (delta) => page(delta),
@@ -193,7 +218,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
       ) : null}
       {shownSrc ? (
         <div
-          key={shownSrc}
+          key={`${shownSrc}:${retryNonce}`}
           className={`absolute inset-0 ${
             animDir === 1
               ? "page-anim-next"
@@ -208,6 +233,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
             alt={blurred ? "" : sauce.title}
             aria-hidden={blurred}
             draggable={false}
+            onError={() => setImgError(true)}
             className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
           />
         </div>
@@ -226,6 +252,21 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
         {isActive && totalPages !== undefined ? `Page ${pageIdx + 1} of ${totalPages}` : ""}
       </span>
 
+      {/* Image-failure panel: centred, above the artwork but below
+          the chrome. The wrapper ignores pointer events so the tap
+          layer and paging stay usable around the panel; only the
+          panel itself captures clicks. Not dimmed (see above). */}
+      {imgError && shownSrc ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <div className="pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border border-white/15 bg-black/85 backdrop-blur px-6 py-5">
+            <p className="text-sm text-white">This page didn't load.</p>
+            <PillButton onClick={retryImage} aria-label="Retry loading this page" className="px-5 py-3 text-sm font-medium">
+              Retry
+            </PillButton>
+          </div>
+        </div>
+      ) : null}
+
       {/* top bar — gradient backing so the text never sits bare
           over variable artwork (mirrors the caption's) */}
       <header className={`absolute top-0 inset-x-0 z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] text-sm bg-gradient-to-b from-black/60 to-transparent ${chromeClass}`}>
@@ -234,7 +275,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
       </header>
 
       {/* right rail — source link and page arrows */}
-      <div className={`absolute right-4 bottom-32 [@media(max-height:560px)]:bottom-16 z-10 flex flex-col items-center gap-4 ${chromeClass}`}>
+      <div className={`absolute right-[max(1rem,env(safe-area-inset-right))] bottom-32 [@media(max-height:560px)]:bottom-16 z-10 flex flex-col items-center gap-4 ${chromeClass}`}>
         <a
           href={sauce.url}
           target="_blank"
