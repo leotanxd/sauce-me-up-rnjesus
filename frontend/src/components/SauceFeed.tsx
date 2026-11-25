@@ -8,7 +8,9 @@ import { useSauceFeed } from "../hooks/useSauceFeed"
 /**
  * The scroll-snap sauce feed. All state and behaviour (loading,
  * dedupe, mode switching, infinite scroll, keyboard nav, dim mode)
- * lives in useSauceFeed; this component is layout only.
+ * lives in useSauceFeed; this component is layout, plus the two
+ * presentation concerns that belong to it: the screen-reader
+ * announcements and the mode-switch fade.
  */
 export default function SauceFeed() {
   const {
@@ -51,9 +53,49 @@ export default function SauceFeed() {
     </div>
   )
 
+  // ---- Mode-switch fade: the outgoing feed fades down before the
+  // switch lands (the incoming one fades in via .feed-swap-in).
+  // Only <main> fades — ModeToggle and the Dim pill stay solid, and
+  // controls are never blocked: a second click mid-fade cancels the
+  // timer and switches immediately to the latest choice, and
+  // reduced-motion skips the delay entirely.
+  const leaveTimerRef = useRef<number | undefined>(undefined)
+  const [leaving, setLeaving] = useState(false)
+  useEffect(() => () => window.clearTimeout(leaveTimerRef.current), [])
+
+  const handleSwitch = (next: boolean) => {
+    // Mid-fade, ANY second click is the latest choice: cancel the
+    // pending switch and act now. (This check must come first —
+    // a click back to the current mode has next === popular, and
+    // it still has to clear the timer, or the faded-to mode would
+    // land anyway.)
+    if (leaving) {
+      window.clearTimeout(leaveTimerRef.current)
+      setLeaving(false)
+      switchMode(next)
+      return
+    }
+    if (!items.length || next === popular) {
+      switchMode(next)
+      return
+    }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      switchMode(next)
+      return
+    }
+    setLeaving(true)
+    leaveTimerRef.current = window.setTimeout(() => {
+      setLeaving(false)
+      switchMode(next)
+    }, 170)
+  }
+
   if (!items.length) {
     return (
-      <main className="h-[100dvh] bg-black text-white flex flex-col items-center justify-center gap-3">
+      <main
+        key={popular ? "popular" : "random"}
+        className="feed-swap-in h-[100dvh] bg-black text-white flex flex-col items-center justify-center gap-3"
+      >
         {liveRegion}
         <ModeToggle popular={popular} onSwitch={switchMode} />
         {error ? (
@@ -90,7 +132,7 @@ export default function SauceFeed() {
     <div className="relative bg-black">
       {liveRegion}
       <div className={chromeClass}>
-        <ModeToggle popular={popular} onSwitch={switchMode} />
+        <ModeToggle popular={popular} onSwitch={handleSwitch} />
       </div>
 
       {/* Dim toggle in the right-side column; the only control
@@ -139,9 +181,12 @@ export default function SauceFeed() {
       )}
 
       <main
+        key={popular ? "popular" : "random"}
         ref={feedRef}
         onScroll={onFeedScroll}
-        className="sauce-feed"
+        className={`sauce-feed feed-swap-in transition-[opacity,transform] duration-[160ms] ease-in ${
+          leaving ? "opacity-0 translate-y-1 pointer-events-none" : ""
+        }`}
         aria-label="Random sauce feed"
       >
         {items.map((sauce, i) =>

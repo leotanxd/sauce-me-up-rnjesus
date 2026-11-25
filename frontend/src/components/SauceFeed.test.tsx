@@ -64,3 +64,55 @@ describe("SauceFeed live region", () => {
   })
 })
 
+describe("SauceFeed mode-switch fade", () => {
+  it("holds the switch until the fade-out elapses", async () => {
+    vi.useFakeTimers()
+    try {
+      mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+      render(<SauceFeed />)
+      await act(async () => {})
+      expect(screen.getByRole("button", { name: "Dim: OFF" })).not.toBeNull()
+
+      mockBatch.mockClear()
+      mockBatch.mockResolvedValue([sauce(10)])
+      fireEvent.click(screen.getByRole("button", { name: "Popular" }))
+      // Fade-out in progress: no fetch for the new mode yet.
+      expect(mockBatch).not.toHaveBeenCalled()
+
+      await act(async () => {
+        vi.advanceTimersByTime(170)
+      })
+      expect(mockBatch).toHaveBeenCalledWith(3, "popular")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("a re-click during the fade cancels the pending switch and honours the latest choice", async () => {
+    vi.useFakeTimers()
+    try {
+      mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+      const { container } = render(<SauceFeed />)
+      await act(async () => {})
+      expect(screen.getByRole("button", { name: "Dim: OFF" })).not.toBeNull()
+
+      mockBatch.mockClear()
+      fireEvent.click(screen.getByRole("button", { name: "Popular" }))
+      expect(container.querySelector("main")?.className).toContain("opacity-0")
+
+      // Changed his mind mid-fade: back to Random. The fade must
+      // cancel on the spot — no pending Popular switch may land.
+      fireEvent.click(screen.getByRole("button", { name: "Random" }))
+      expect(container.querySelector("main")?.className).not.toContain("opacity-0")
+
+      await act(async () => {
+        vi.advanceTimersByTime(1000)
+      })
+      expect(mockBatch).not.toHaveBeenCalled()
+      // Still the random feed, still showing its cards.
+      expect(screen.getByRole("button", { name: "Dim: OFF" })).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
