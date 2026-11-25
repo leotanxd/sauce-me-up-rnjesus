@@ -119,6 +119,16 @@ export function useSauceFeed() {
     if (isIntersecting) void loadMore(BATCH_SIZE)
   }, [isIntersecting, loadMore])
 
+  // Keyboard (and any non-scroll) navigation never reveals the sentinel
+  // (see plan): when the active card is the last loaded one, top up
+  // through the same loadMore the sentinel uses. loadMore's in-flight
+  // guard dedupes this against the sentinel trigger.
+  useEffect(() => {
+    if (items.length > 0 && activeIndex >= items.length - 1) {
+      void loadMore(BATCH_SIZE)
+    }
+  }, [activeIndex, items.length, loadMore])
+
   // Keyboard: ↑/↓ move between cards (the feed container scrolls by snap)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
