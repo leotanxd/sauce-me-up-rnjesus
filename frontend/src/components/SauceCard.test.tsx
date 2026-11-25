@@ -32,9 +32,15 @@ const longTitle: Sauce = {
 
 const shortTitle: Sauce = { ...longTitle, id: 8, title: "Short little title" }
 
-function renderCard(sauce: Sauce, dimmed = false) {
+function renderCard(sauce: Sauce, dimmed = false, onToggleDim = () => {}) {
   return render(
-    <SauceCard sauce={sauce} blurred={true} onToggleBlur={() => {}} dimmed={dimmed} />,
+    <SauceCard
+      sauce={sauce}
+      blurred={true}
+      onToggleBlur={() => {}}
+      dimmed={dimmed}
+      onToggleDim={onToggleDim}
+    />,
   )
 }
 
@@ -85,7 +91,13 @@ describe("SauceCard title dismiss and swipe suppression", () => {
     setSmallScreen(true)
     const onToggleBlur = vi.fn()
     render(
-      <SauceCard sauce={longTitle} blurred={true} onToggleBlur={onToggleBlur} dimmed={false} />,
+      <SauceCard
+        sauce={longTitle}
+        blurred={true}
+        onToggleBlur={onToggleBlur}
+        dimmed={false}
+        onToggleDim={() => {}}
+      />,
     )
     // Make this the active card so the swipe handlers are live.
     act(() => {
@@ -154,6 +166,43 @@ describe("SauceCard dim mode", () => {
     const footer = container.querySelector("footer")
     expect(footer!.className).toContain("opacity-100")
     expect(footer!.className).not.toContain("invisible")
+  })
+})
+
+describe("SauceCard Dim toggle", () => {
+  it("renders the Dim pill in the card at the rail's column geometry and toggles on click", () => {
+    const onToggleDim = vi.fn()
+    renderCard(longTitle, false, onToggleDim)
+
+    const dim = screen.getByRole("button", { name: "Dim: OFF" })
+    expect(dim.getAttribute("aria-pressed")).toBe("false")
+    // Per-card (absolute), not the old feed-level fixed pill.
+    expect(dim.className).toContain("absolute")
+    expect(dim.className).not.toContain("fixed")
+    expect(dim.className).toContain("right-[max(1rem,env(safe-area-inset-right))]")
+    expect(dim.className).toContain("bottom-[282px]")
+    expect(dim.className).toContain("[@media(max-height:560px)]:bottom-[218px]")
+
+    fireEvent.click(dim)
+    expect(onToggleDim).toHaveBeenCalledTimes(1)
+  })
+
+  it("stays visible and clickable at reduced opacity while dimmed — it is the only exit", () => {
+    const onToggleDim = vi.fn()
+    renderCard(longTitle, true, onToggleDim)
+
+    const dim = screen.getByRole("button", { name: "Dim: ON" })
+    expect(dim.getAttribute("aria-pressed")).toBe("true")
+    expect(dim.className).toContain("opacity-40")
+    expect(dim.className).toContain("hover:opacity-100")
+    expect(dim.className).toContain("focus-visible:opacity-100")
+    // Never the chrome hide set.
+    expect(dim.className).not.toContain("opacity-0")
+    expect(dim.className).not.toContain("invisible")
+    expect(dim.className).not.toContain("pointer-events-none")
+
+    fireEvent.click(dim)
+    expect(onToggleDim).toHaveBeenCalledTimes(1)
   })
 })
 

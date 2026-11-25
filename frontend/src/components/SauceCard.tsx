@@ -12,6 +12,8 @@ type Props = {
   onToggleBlur: () => void
   /** Dim mode: header, rail and caption fade out and go inert. */
   dimmed: boolean
+  /** Toggle dim mode; this card's Dim pill stays available while dimmed. */
+  onToggleDim: () => void
 }
 
 /**
@@ -25,7 +27,7 @@ type Props = {
  * button that expands the full title in a narrow panel; on desktop
  * the title is the plain full-text paragraph it has always been.
  */
-export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Props) {
+export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onToggleDim }: Props) {
   const { cardRef, isActive, currentSrc, pageIdx, totalPages, goToPage, loadingPages } =
     useGalleryPages(sauce)
   const smallScreen = useIsSmallScreen()
@@ -303,6 +305,28 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
           </PillButton>
         </div>
       </div>
+
+      {/* Dim toggle — part of this card's right-side column, so it
+          scrolls with the card instead of staying fixed over the
+          feed. Geometry (right offset is the safe-area inset form
+          — max(1rem, env(safe-area-inset-right)) — so landscape
+          notches clear the column; on desktop env() is 0 and it
+          reduces to 1rem): the rail spans bottom 128–266px, so Dim
+          sits at bottom-[282px] — 16px above the rail's top edge.
+          The max-height variant compresses the column (rail
+          included) on short/landscape viewports. Unlike the chrome
+          above, this pill never takes the hidden class set: it is
+          the only exit from dim mode, so while dimmed it stays
+          clickable at 40% opacity (restored on hover/focus). */}
+      <PillButton
+        onClick={onToggleDim}
+        aria-pressed={dimmed}
+        className={`absolute right-[max(1rem,env(safe-area-inset-right))] bottom-[282px] [@media(max-height:560px)]:bottom-[218px] z-20 backdrop-blur ${PILL_LG} transition-[opacity,background-color,border-color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-2 focus-visible:ring-offset-black ${
+          dimmed ? "opacity-40 hover:opacity-100 focus-visible:opacity-100" : ""
+        }`}
+      >
+        {dimmed ? "Dim: ON" : "Dim: OFF"}
+      </PillButton>
 
       {/* caption */}
       <footer className={`absolute bottom-0 inset-x-0 z-10 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-black/80 to-transparent ${chromeClass}`}>

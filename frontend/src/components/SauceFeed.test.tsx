@@ -31,6 +31,11 @@ const sauce = (id: number): Sauce => ({
 
 const region = (container: HTMLElement) => container.querySelector("[aria-live='polite']")
 
+// Dim is rendered per card now (it scrolls with the card), so a
+// loaded feed shows one Dim: OFF button per mounted card — never a
+// single feed-level pill.
+const dimOffButtons = () => screen.getAllByRole("button", { name: "Dim: OFF" })
+
 beforeEach(() => {
   vi.resetAllMocks()
   IntersectionObserverStub.reset()
@@ -45,8 +50,8 @@ describe("SauceFeed live region", () => {
   it("announces the new mode after a switch", async () => {
     mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
     const { container } = render(<SauceFeed />)
-    // Feed view up (the Dim pill exists only there), region quiet.
-    await waitFor(() => expect(screen.getByRole("button", { name: "Dim: OFF" })).not.toBeNull())
+    // Feed view up (per-card Dim pills exist only there), region quiet.
+    await waitFor(() => expect(dimOffButtons()).toHaveLength(3))
     expect(region(container)?.textContent).toBe("")
 
     mockBatch.mockResolvedValue([sauce(10), sauce(11)])
@@ -65,6 +70,19 @@ describe("SauceFeed live region", () => {
   })
 })
 
+describe("SauceFeed Dim placement", () => {
+  it("renders one per-card (absolute, not fixed) Dim toggle per mounted card", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    render(<SauceFeed />)
+    await waitFor(() => expect(dimOffButtons()).toHaveLength(3))
+    for (const dim of dimOffButtons()) {
+      expect(dim.className).toContain("absolute")
+      expect(dim.className).not.toContain("fixed")
+      expect(dim.className).toContain("bottom-[282px]")
+    }
+  })
+})
+
 describe("SauceFeed mode-switch fade", () => {
   it("holds the switch until the fade-out elapses", async () => {
     vi.useFakeTimers()
@@ -72,7 +90,7 @@ describe("SauceFeed mode-switch fade", () => {
       mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
       render(<SauceFeed />)
       await act(async () => {})
-      expect(screen.getByRole("button", { name: "Dim: OFF" })).not.toBeNull()
+      expect(dimOffButtons()).toHaveLength(3)
 
       mockBatch.mockClear()
       mockBatch.mockResolvedValue([sauce(10)])
@@ -95,7 +113,7 @@ describe("SauceFeed mode-switch fade", () => {
       mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
       const { container } = render(<SauceFeed />)
       await act(async () => {})
-      expect(screen.getByRole("button", { name: "Dim: OFF" })).not.toBeNull()
+      expect(dimOffButtons()).toHaveLength(3)
 
       mockBatch.mockClear()
       fireEvent.click(screen.getByRole("button", { name: "Popular" }))
@@ -111,7 +129,7 @@ describe("SauceFeed mode-switch fade", () => {
       })
       expect(mockBatch).not.toHaveBeenCalled()
       // Still the random feed, still showing its cards.
-      expect(screen.getByRole("button", { name: "Dim: OFF" })).not.toBeNull()
+      expect(dimOffButtons()).toHaveLength(3)
     } finally {
       vi.useRealTimers()
     }

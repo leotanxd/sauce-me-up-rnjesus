@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import SauceCard from "./SauceCard"
 import LoadingGirl from "./LoadingGirl"
 import ModeToggle from "./ModeToggle"
-import PillButton, { PILL_LG } from "./ui/PillButton"
+import PillButton from "./ui/PillButton"
 import { useSauceFeed } from "../hooks/useSauceFeed"
 
 /**
@@ -55,10 +55,10 @@ export default function SauceFeed() {
 
   // ---- Mode-switch fade: the outgoing feed fades down before the
   // switch lands (the incoming one fades in via .feed-swap-in).
-  // Only <main> fades — ModeToggle and the Dim pill stay solid, and
-  // controls are never blocked: a second click mid-fade cancels the
-  // timer and switches immediately to the latest choice, and
-  // reduced-motion skips the delay entirely.
+  // Only <main> fades — ModeToggle stays solid, and controls are
+  // never blocked: a second click mid-fade cancels the timer and
+  // switches immediately to the latest choice, and reduced-motion
+  // skips the delay entirely.
   const leaveTimerRef = useRef<number | undefined>(undefined)
   const [leaving, setLeaving] = useState(false)
   useEffect(() => () => window.clearTimeout(leaveTimerRef.current), [])
@@ -121,9 +121,10 @@ export default function SauceFeed() {
     )
   }
 
-  // Dim mode: chrome fades out and goes inert (invisible also drops
-  // it from the tab order). The Dim toggle itself is the one exit —
-  // it stays, at reduced opacity while dimmed.
+  // Dim mode: this ModeToggle wrapper fades out and goes inert
+  // (invisible also drops it from the tab order). Each card's own
+  // Dim toggle is the exit — SauceCard keeps it visible, at
+  // reduced opacity while dimmed.
   const chromeClass = `transition-opacity duration-200 ${
     dimmed ? "opacity-0 invisible pointer-events-none" : "opacity-100 visible"
   }`
@@ -134,27 +135,6 @@ export default function SauceFeed() {
       <div className={chromeClass}>
         <ModeToggle popular={popular} onSwitch={handleSwitch} />
       </div>
-
-      {/* Dim toggle in the right-side column; the only control
-          that stays visible (at 40% opacity) while dimmed.
-          Right-column geometry (right offset is the safe-area
-          inset form — max(1rem, env(safe-area-inset-right)) — so
-          landscape notches clear the column; on desktop env() is 0
-          and it reduces to 1rem as before): the card rail spans
-          bottom 128–266px, so Dim sits at bottom-[282px] — 16px
-          above the rail's top edge. If the rail's contents or its
-          bottom-32 offset ever change, recompute this offset. The
-          max-height variant compresses the column (rail included)
-          on short/landscape viewports. */}
-      <PillButton
-        onClick={toggleDim}
-        aria-pressed={dimmed}
-        className={`fixed right-[max(1rem,env(safe-area-inset-right))] bottom-[282px] [@media(max-height:560px)]:bottom-[218px] z-20 backdrop-blur ${PILL_LG} transition-[opacity,background-color,border-color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-2 focus-visible:ring-offset-black ${
-          dimmed ? "opacity-40 hover:opacity-100 focus-visible:opacity-100" : ""
-        }`}
-      >
-        {dimmed ? "Dim: ON" : "Dim: OFF"}
-      </PillButton>
 
       {/* waiting animation while the next batch is being generated,
           centered on the page */}
@@ -206,6 +186,7 @@ export default function SauceFeed() {
               blurred={blurred}
               onToggleBlur={toggleBlur}
               dimmed={dimmed}
+              onToggleDim={toggleDim}
             />
           ),
         )}
