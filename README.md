@@ -23,7 +23,7 @@ it's working.)
 - **Batches of 3, generated concurrently** — the feed tops itself up
   as you approach the end, so there's always another card.
 - **Blur on by default** — every image starts blurred; tap the image
-  (or the Reveal button) to show it, per card or for the whole feed.
+  (or the Blur switch) to show it, per card or for the whole feed.
 - **In-gallery paging three ways** — the ‹ › buttons, the ← → arrow
   keys, or a horizontal swipe on the image.
 - **Page X of Y, always shown** — every card displays its page
@@ -34,7 +34,7 @@ it's working.)
 - **Dim mode** — one toggle hides every button and caption, leaving
   just the image (and the Dim toggle itself, so you can get back).
 - **Thumb-sized controls** — the feed's main buttons (paging ‹ ›,
-  Reveal, ↗ Source, Random | Popular, Blur, Dim, and Retry) are at
+  ↗ Source, Random | Popular, Blur, Dim, and Retry) are at
   least 48px in both dimensions, sized for thumbs on mobile and
   easy clicking on desktop.
 - **Feed windowing** — only the cards near the one you're viewing
@@ -49,7 +49,7 @@ it's working.)
 | Swipe left / right on the image | Next / previous page of the sauce you're viewing |
 | `→` arrow key (or the `›` button) | Next page of the sauce you're viewing |
 | `←` arrow key (or the `‹` button) | Previous page of that sauce |
-| **Reveal** / **Blur** button, or tap the image | Toggle the blur on the current sauce |
+| Tap the image | Toggle the blur |
 | **Blur: ON/OFF** switch (bottom-left) | Toggle blur for the whole feed |
 | **Dim: ON/OFF** toggle (bottom-left) | Hide / show all buttons and text |
 | Tap the title (small screens) | Expand a condensed title; tap again to collapse |

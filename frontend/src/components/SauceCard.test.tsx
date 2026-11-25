@@ -109,13 +109,26 @@ describe("SauceCard title dismiss and swipe suppression", () => {
   })
 })
 
+describe("SauceCard rail contents", () => {
+  it("has no Reveal/Blur rail button; Source and page arrows remain", () => {
+    renderCard(longTitle)
+    // The rail's old blur-toggle button is gone. (The tap layer's
+    // aria-label is "Reveal image"/"Blur image" — it must not trip
+    // this check, so match the rail button's emoji labels exactly.)
+    expect(screen.queryByRole("button", { name: /👁 Reveal|🙈 Blur/ })).toBeNull()
+    expect(screen.getByRole("link", { name: /Source/ })).not.toBeNull()
+    expect(screen.getByRole("button", { name: "Previous page" })).not.toBeNull()
+    expect(screen.getByRole("button", { name: "Next page" })).not.toBeNull()
+  })
+})
+
 describe("SauceCard dim mode", () => {
   it("hides header, rail and footer with the inert class set when dimmed", () => {
     const { container } = renderCard(longTitle, true)
     const chrome = [
       container.querySelector("header"),
       container.querySelector("footer"),
-      screen.getByRole("button", { name: /👁 Reveal/ }).parentElement,
+      screen.getByRole("link", { name: /Source/ }).parentElement,
     ]
     for (const el of chrome) {
       expect(el).not.toBeNull()

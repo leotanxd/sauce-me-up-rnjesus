@@ -108,15 +108,8 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
         <span className="text-neutral-400">#{sauce.id}</span>
       </header>
 
-      {/* right rail — blur toggle, source, and page arrows */}
+      {/* right rail — source link and page arrows */}
       <div className={`absolute right-4 bottom-32 z-10 flex flex-col items-center gap-4 ${chromeClass}`}>
-        <PillButton
-          onClick={onToggleBlur}
-          aria-pressed={!blurred}
-          className={`backdrop-blur ${PILL_LG} font-medium active:scale-95`}
-        >
-          {blurred ? "👁 Reveal" : "🙈 Blur"}
-        </PillButton>
         <a
           href={sauce.url}
           target="_blank"
@@ -175,7 +168,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
             : totalPages !== undefined
               ? `Page ${pageIdx + 1} of ${totalPages} · ← → to browse this sauce`
               : "← → to browse this sauce's pages"}
-          {blurred ? " · Blurred — tap Reveal to show" : ""}
+          {blurred ? " · Blurred — tap the image to show" : ""}
         </p>
       </footer>
 
