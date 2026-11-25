@@ -10,6 +10,7 @@ vi.mock("../lib/api", () => ({
 }))
 
 import SauceCard from "./SauceCard"
+import { fetchSaucePages } from "../lib/api"
 
 const longTitle: Sauce = {
   id: 7,
@@ -143,5 +144,46 @@ describe("SauceCard dim mode", () => {
     const footer = container.querySelector("footer")
     expect(footer!.className).toContain("opacity-100")
     expect(footer!.className).not.toContain("invisible")
+  })
+})
+
+describe("SauceCard page-turn animation", () => {
+  const pages = [
+    "https://img.example/7/1.jpg",
+    "https://img.example/7/2.jpg",
+    "https://img.example/7/3.jpg",
+  ]
+
+  it("slides the incoming page in from the turn's direction", async () => {
+    vi.mocked(fetchSaucePages).mockResolvedValue(pages)
+    const { container } = renderCard(longTitle)
+    // Make this the active card, as when it's the one on screen.
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+
+    const img = () => container.querySelector("img")
+    const wrapper = () => img()!.parentElement
+
+    // Initial render: first image, no animation armed.
+    expect(img()!.getAttribute("src")).toBe(longTitle.firstImageUrl)
+    expect(wrapper()!.className).not.toContain("page-anim-")
+
+    // Next page: wrapper remounts on the new src, sliding in as a
+    // "next" turn. (jsdom runs no animations — assert class + src.)
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }))
+    })
+    expect(img()!.getAttribute("src")).toBe(pages[1])
+    expect(wrapper()!.className).toContain("page-anim-next")
+
+    // Previous page: same story, mirrored class.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Previous page" }))
+    })
+    expect(img()!.getAttribute("src")).toBe(pages[0])
+    expect(wrapper()!.className).toContain("page-anim-prev")
   })
 })

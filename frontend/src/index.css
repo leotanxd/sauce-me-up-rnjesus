@@ -43,6 +43,24 @@ body {
 .sauce-img.is-blurred { filter: blur(28px); transform: scale(1.12); }
 .sauce-img.is-clear { filter: blur(0); transform: scale(1); }
 
+/* Page-turn slide-fade: applied to the wrapper around .sauce-img
+   (the img's own transform belongs to the blur scale above). The
+   incoming page settles in from the side it conceptually comes
+   from — next page from the right, previous from the left. The
+   classes set only `animation` (no static transform/opacity), so
+   they are visually inert once the one-shot keyframe has run. */
+@keyframes page-in-next {
+  from { transform: translateX(48px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+@keyframes page-in-prev {
+  from { transform: translateX(-48px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+.page-anim-next { animation: page-in-next 240ms cubic-bezier(0.22, 0.61, 0.36, 1); }
+.page-anim-prev { animation: page-in-prev 240ms cubic-bezier(0.22, 0.61, 0.36, 1); }
+
 @media (prefers-reduced-motion: reduce) {
   .sauce-img { transition: none; }
+  .page-anim-next, .page-anim-prev { animation: none; }
 }

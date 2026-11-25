@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { Sauce } from "../types"
 import { useGalleryPages } from "../hooks/useGalleryPages"
 import { useHorizontalSwipe } from "../hooks/useHorizontalSwipe"
@@ -47,6 +47,22 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
     void goToPage(delta)
   }
 
+  // Page-turn animation direction, derived from the pageIdx delta
+  // during render (the previous-value pattern — no effect lag, so
+  // the incoming page's first frame already carries the class). The
+  // image wrapper below is keyed by currentSrc, so a page change
+  // remounts it and replays the one-shot slide-fade keyframe;
+  // onAnimationEnd disarms the direction, so a later src change
+  // that isn't a page turn can't replay a stale direction. The
+  // animation lives on the wrapper, never the img — the img's own
+  // transform belongs to the blur scale.
+  const prevPageIdxRef = useRef(pageIdx)
+  const pageDirRef = useRef<0 | 1 | -1>(0)
+  if (pageIdx !== prevPageIdxRef.current) {
+    pageDirRef.current = pageIdx > prevPageIdxRef.current ? 1 : -1
+    prevPageIdxRef.current = pageIdx
+  }
+
   const swipe = useHorizontalSwipe({
     enabled: isActive,
     onSwipe: (delta) => page(delta),
@@ -89,13 +105,27 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed }: Prop
   return (
     <article ref={cardRef} className="sauce-card relative flex items-center justify-center bg-black overflow-hidden">
       {currentSrc ? (
-        <img
-          src={currentSrc}
-          alt={blurred ? "" : sauce.title}
-          aria-hidden={blurred}
-          draggable={false}
-          className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
-        />
+        <div
+          key={currentSrc}
+          className={`absolute inset-0 ${
+            pageDirRef.current === 1
+              ? "page-anim-next"
+              : pageDirRef.current === -1
+                ? "page-anim-prev"
+                : ""
+          }`}
+          onAnimationEnd={() => {
+            pageDirRef.current = 0
+          }}
+        >
+          <img
+            src={currentSrc}
+            alt={blurred ? "" : sauce.title}
+            aria-hidden={blurred}
+            draggable={false}
+            className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
+          />
+        </div>
       ) : (
         <p className="text-neutral-500 text-sm px-8 text-center">
           No first-page image was returned for this item.
