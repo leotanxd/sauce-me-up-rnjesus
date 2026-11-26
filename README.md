@@ -148,12 +148,15 @@ Dockerfile    Single-service image (see DEPLOY.md)
 
 ## Development
 
-Prerequisites: Python ≥ 3.11 and Node 20.
+Prerequisites: Python ≥ 3.11 and Node 24.
 
 ```bash
 pip install -e ".[test]"   # the package (incl. httpx) plus test deps (pytest)
                            # runtime only: pip install -e .
-                           # (backend/requirements.txt does the same)
+                           # reproducible installs: requirements.txt /
+                           # requirements-dev.txt are hash-locked
+                           # (pip-compile output — regenerate, don't
+                           # hand-edit; see the headers in those files)
 
 uvicorn backend.api:app --port 8000        # API (+ built frontend, if present)
 
@@ -168,14 +171,22 @@ python -m src.cli                          # command-line front end
 ```bash
 pytest                             # backend suite (tests/, fully offline —
                                    # fake transport and fake client)
+ruff check src backend tests       # Python lint (+ ruff format --check)
+mypy src backend                   # Python type check (permissive config)
 cd frontend && npm test            # Vitest hook + component tests
 npm run typecheck                  # TypeScript, no emit
+npm run lint                       # eslint (flat config)
 npm run build                      # production bundle
+npm run test:e2e                   # Playwright smoke suite (needs the
+                                   # build above + the dev Python env)
 ```
 
 CI runs on GitHub Actions (`.github/workflows/ci.yml`) on pushes to
-`main` and on pull requests, with two jobs: backend pytest on
-Python 3.12, and frontend typecheck + test + build on Node 20.
+`main` and on pull requests: backend pytest on Python 3.12 (installed
+from the hash-locked `requirements-dev.txt`), frontend typecheck +
+test + build on Node 24, a lint job (ruff + mypy on the Python side,
+eslint on the frontend), and a Playwright E2E smoke suite
+(`frontend/e2e/`) against the real built app with a stub upstream.
 
 ## Deployment
 

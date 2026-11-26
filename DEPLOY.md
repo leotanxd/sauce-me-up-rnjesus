@@ -61,6 +61,29 @@ see the implementation plan's Package 4 notes), run exactly one
 uvicorn worker in exactly one instance, which is what the Dockerfile
 and `render.yaml` do.
 
+## Base-image digests
+
+The Dockerfile pins both base images by digest
+(`node:24-slim@sha256:…`, `python:3.12-slim@sha256:…`) so a rebuild
+cannot silently pick up a different image under the same tag.
+Refresh them manually — monthly-ish, or when Node/Python publish
+security releases:
+
+```bash
+# Prints the current manifest-list digest for a tag:
+curl -s "https://hub.docker.com/v2/repositories/library/node/tags/24-slim" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['digest'])"
+curl -s "https://hub.docker.com/v2/repositories/library/python/tags/3.12-slim" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['digest'])"
+```
+
+Paste the new digest into the `FROM` line, rebuild, and run the test
+suites before pushing — a digest bump is a dependency change like
+any other. Python dependencies are likewise frozen with hashes in
+`requirements.txt` / `requirements-dev.txt` (regenerate with
+`pip-compile --generate-hashes` from `pyproject.toml`; never
+hand-edit them).
+
 ## Option B — the same Docker image anywhere else
 
 ```bash
