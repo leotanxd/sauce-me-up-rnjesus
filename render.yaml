@@ -8,6 +8,9 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
+    # Render's own health check exercises the app's health endpoint
+    # (async, observed-state only — it never probes upstream).
+    healthCheckPath: /api/health
     # No environment variables or secrets are required.
     # Free services spin down after ~15 min idle and take ~30-60s
     # to wake on the next visit — that is expected on the free plan.

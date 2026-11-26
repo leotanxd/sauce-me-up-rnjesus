@@ -1,4 +1,5 @@
-"""Health check and the JSON-404 catch-all for unmatched /api/* paths."""
+"""Health check, metrics, and the JSON-404 catch-all for unmatched
+/api/* paths."""
 
 import time
 from collections.abc import Callable
@@ -52,14 +53,29 @@ def build_health(
 
 def create_meta_router(
     health_provider: Callable[[], dict] | None = None,
+    metrics_provider: Callable[[], dict] | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/health")
-    def health() -> dict:
+    async def health() -> dict:
+        # Async on purpose (Package 4): the handler only reads
+        # observed state, so it answers on the event loop even while
+        # every threadpool thread is busy with long batch work —
+        # a sync handler would queue behind exactly the load a
+        # health check exists to observe.
         if health_provider is not None:
             return health_provider()
         return {"status": "ok"}
+
+    if metrics_provider is not None:
+        # Registered only when a metrics registry is wired in
+        # (Settings.metrics_enabled); otherwise the path falls
+        # through to the JSON 404 below like any unknown route.
+
+        @router.get("/api/metrics")
+        def metrics() -> dict:
+            return metrics_provider()
 
     # Any /api/* path that matched no earlier route is a client bug —
     # answer with a JSON 404 instead of the SPA's index.html (which
