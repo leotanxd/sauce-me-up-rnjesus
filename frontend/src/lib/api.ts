@@ -19,6 +19,24 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "" // "" = Vite dev proxy
 
 type QueryParams = Record<string, string | number | boolean | undefined>
 
+/**
+ * An abort signal that fires after `ms` — the fetch timeout.
+ * AbortSignal.timeout is the native one-liner, but it only exists
+ * from Safari 16 / Chrome 103 / Firefox 100; on older engines the
+ * property is absent and calling it would throw a TypeError
+ * synchronously, making the timeout mechanism itself fail EVERY
+ * fetch. Feature-detect it and fall back to an AbortController +
+ * timer, so the timeout works on those engines too.
+ */
+function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(ms)
+  }
+  const controller = new AbortController()
+  setTimeout(() => controller.abort(), ms)
+  return controller.signal
+}
+
 function apiFetch(path: string, params?: QueryParams): Promise<Response> {
   const qs = new URLSearchParams()
   for (const [key, value] of Object.entries(params ?? {})) {
@@ -26,7 +44,7 @@ function apiFetch(path: string, params?: QueryParams): Promise<Response> {
   }
   const query = qs.toString()
   return fetch(`${API_BASE}${path}${query ? `?${query}` : ""}`, {
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: timeoutSignal(FETCH_TIMEOUT_MS),
   })
 }
 

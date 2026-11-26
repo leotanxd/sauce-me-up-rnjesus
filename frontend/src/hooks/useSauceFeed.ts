@@ -23,6 +23,7 @@ export function useSauceFeed() {
   const [loadingMore, setLoadingMore] = useState(false) // top-up in progress
   const [activeIndex, setActiveIndex] = useState(0) // card in the viewport
   const loadingRef = useRef(false)
+  const nearEndRef = useRef(false) // proximity trigger's zone state (below)
   const seenRef = useRef<Set<number>>(new Set()) // IDs already in the feed
   const sentinelRef = useRef<HTMLDivElement>(null)
   const feedRef = useRef<HTMLDivElement>(null)
@@ -40,14 +41,26 @@ export function useSauceFeed() {
       // whole batch comes back already-seen, retry a couple of times
       // instead of silently dead-ending the feed.
       let fresh: Sauce[] = []
+      let sawDuplicates = false
       for (let attempt = 0; attempt < 3 && fresh.length === 0; attempt++) {
         const more = n === 1 ? [await fetchNextSauce(mode)] : await fetchSauceBatch(n, mode)
+        if (more.some((s) => seenRef.current.has(s.id))) sawDuplicates = true
         fresh = more.filter((s) => !seenRef.current.has(s.id))
       }
       if (genRef.current !== gen) return // mode switched mid-load — discard
       fresh.forEach((s) => seenRef.current.add(s.id))
-      if (fresh.length) setItems((prev) => [...prev, ...fresh])
-      setError(null) // a successful load clears any earlier failure notice
+      if (fresh.length) {
+        setItems((prev) => [...prev, ...fresh])
+        setError(null) // a successful load clears any earlier failure notice
+      } else if (sawDuplicates) {
+        // Every attempt came back already-seen: the supply is
+        // exhausted for now. Say so — the error bar offers Retry,
+        // and retrying re-arms the triggers — instead of leaving
+        // the feed silently dead-ended on its last card. (A batch
+        // that merely returns empty is not this: nothing was
+        // offered, so there is nothing to report.)
+        setError("No new sauce right now.")
+      }
     } catch (e) {
       if (genRef.current === gen) {
         setError("Could not load sauce. Check your connection and try again.")
@@ -82,6 +95,7 @@ export function useSauceFeed() {
 
   const retry = useCallback(() => {
     setError(null)
+    nearEndRef.current = false // re-arm the proximity trigger too
     void loadMore(BATCH_SIZE)
   }, [loadMore])
 
@@ -109,24 +123,35 @@ export function useSauceFeed() {
 
   // Infinite scroll: when the sentinel (near the end) is visible, top
   // up. The sentinel only exists once the feed view renders, so the
-  // observer is enabled only when there are items.
+  // observer is enabled only when there are items. The rootMargin
+  // pre-fires it a full viewport early — when the second-to-last
+  // card is on screen the sentinel is one card below the fold — so
+  // scroll-driven top-ups also start a card sooner.
   const { isIntersecting } = useIntersectionObserver(
     sentinelRef,
-    { threshold: 0.1 },
+    { threshold: 0.1, rootMargin: "0px 0px 100% 0px" },
     items.length > 0,
   )
   useEffect(() => {
     if (isIntersecting) void loadMore(BATCH_SIZE)
   }, [isIntersecting, loadMore])
 
-  // Keyboard (and any non-scroll) navigation never reveals the sentinel
-  // (see plan): when the active card is the last loaded one, top up
-  // through the same loadMore the sentinel uses. loadMore's in-flight
-  // guard dedupes this against the sentinel trigger.
+  // Navigation that never reveals the sentinel (keyboard ↓ scrolls
+  // exactly one viewport and lands on a snap point, so the sentinel
+  // below the last card may never intersect) tops up through this
+  // trigger instead: it fires when the active card ENTERS the last
+  // two cards — second-to-last or last — a full card earlier than
+  // the old last-card-only trigger, so a slow batch is already in
+  // flight before the user reaches the end. Entry, not residence,
+  // is what fires: moving within the last two does not re-fire (an
+  // exhausted top-up must not spin), and scrolling away and back
+  // re-arms it. loadMore's in-flight guard dedupes this against
+  // the sentinel trigger.
   useEffect(() => {
-    if (items.length > 0 && activeIndex >= items.length - 1) {
-      void loadMore(BATCH_SIZE)
-    }
+    const nearEnd = items.length > 0 && activeIndex >= items.length - 2
+    const entered = nearEnd && !nearEndRef.current
+    nearEndRef.current = nearEnd
+    if (entered) void loadMore(BATCH_SIZE)
   }, [activeIndex, items.length, loadMore])
 
   // Keyboard: ↑/↓ move between cards (the feed container scrolls by snap)

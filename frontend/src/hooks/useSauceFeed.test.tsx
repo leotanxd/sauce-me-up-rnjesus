@@ -157,6 +157,31 @@ describe("useSauceFeed", () => {
     expect(hook.dimmed).toBe(true)
   })
 
+  it("surfaces an exhausted state when every top-up attempt is already-seen, and retry recovers", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+    expect(hook.error).toBeNull()
+
+    // Top-up via the sentinel: all 3 internal attempts come back
+    // already-seen. The feed must say so — not sit silently on its
+    // last card with no error and no way forward.
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+    await waitFor(() => expect(hook.error).toBe("No new sauce right now."))
+    expect(hook.items).toHaveLength(3)
+    expect(hook.loadingMore).toBe(false)
+
+    // Retry (the error bar's button calls this) re-arms and recovers.
+    mockBatch.mockResolvedValueOnce([sauce(4), sauce(5), sauce(6)])
+    act(() => hook.retry())
+    await waitFor(() => expect(hook.items).toHaveLength(6))
+    expect(hook.error).toBeNull()
+  })
+
   it("sets an error on failure and retry() recovers", async () => {
     mockBatch.mockRejectedValueOnce(new Error("backend down"))
     render(<Harness />)
@@ -248,6 +273,26 @@ describe("useSauceFeed keyboard load-more", () => {
     expect(hook.activeIndex).toBe(1)
     pressDown()
     expect(hook.activeIndex).toBe(2)
+
+    await waitFor(() => expect(hook.items).toHaveLength(6))
+    expect(hook.items.map((s) => s.id)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(mockBatch).toHaveBeenCalledTimes(2)
+    expect(hook.error).toBeNull()
+  })
+
+  it("starts the top-up at the second-to-last card, before reaching the last", async () => {
+    mockBatch.mockResolvedValueOnce([sauce(1), sauce(2), sauce(3)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+    expect(mockBatch).toHaveBeenCalledTimes(1)
+
+    stubKeyboardScrolling()
+    mockBatch.mockResolvedValueOnce([sauce(4), sauce(5), sauce(6)])
+
+    // One ↓: the second-to-last card. The top-up must already be
+    // under way — the user has not reached the last card yet.
+    pressDown()
+    expect(hook.activeIndex).toBe(1)
 
     await waitFor(() => expect(hook.items).toHaveLength(6))
     expect(hook.items.map((s) => s.id)).toEqual([1, 2, 3, 4, 5, 6])
