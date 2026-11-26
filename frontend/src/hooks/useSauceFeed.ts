@@ -61,7 +61,7 @@ export function useSauceFeed() {
         // offered, so there is nothing to report.)
         setError("No new sauce right now.")
       }
-    } catch (e) {
+    } catch {
       if (genRef.current === gen) {
         setError("Could not load sauce. Check your connection and try again.")
       }
