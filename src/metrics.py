@@ -142,9 +142,7 @@ class Metrics:
             self._batch_count += 1
             self._batch_sum += seconds
             self._batch_max = max(self._batch_max, seconds)
-            for bound, key in zip(
-                BATCH_DURATION_BOUNDS, _bucket_keys(), strict=False
-            ):
+            for bound, key in zip(BATCH_DURATION_BOUNDS, _bucket_keys(), strict=False):
                 if seconds <= bound:
                     self._batch_buckets[key] += 1
                     break

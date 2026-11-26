@@ -75,7 +75,7 @@ class _ModeState:
     condition rather than duplicating the fetch.
     """
 
-    __slots__ = ("pool", "num_pages", "refilling", "condition")
+    __slots__ = ("condition", "num_pages", "pool", "refilling")
 
     def __init__(self):
         self.pool: list = []
@@ -98,13 +98,9 @@ class SearchPool:
         # Package 4 metrics registry or None: refill counts per mode
         # (background refills counted additionally as their subset).
         self._metrics = metrics
-        self._states: dict[FeedMode, _ModeState] = {
-            m: _ModeState() for m in FeedMode
-        }
+        self._states: dict[FeedMode, _ModeState] = {m: _ModeState() for m in FeedMode}
 
-    def _fetch_page(
-        self, mode: FeedMode, deadline: float | None = None
-    ) -> list:
+    def _fetch_page(self, mode: FeedMode, deadline: float | None = None) -> list:
         """Fetch one random search page; return its shuffled summaries.
 
         Performs network I/O and must NOT be called with the mode's
@@ -120,22 +116,16 @@ class SearchPool:
             with state.condition:
                 if state.num_pages is None:
                     state.num_pages = (
-                        learned
-                        if isinstance(learned, int) and learned > 0
-                        else 1
+                        learned if isinstance(learned, int) and learned > 0 else 1
                     )
             results = data.get("result", [])
         else:
             page = random.randint(1, num_pages)
-            data = self._http.get_json(
-                build_search_url(page, mode), deadline=deadline
-            )
+            data = self._http.get_json(build_search_url(page, mode), deadline=deadline)
             results = data.get("result", [])
             if not isinstance(results, list) or not results:
                 # Stale/empty page — fall back to page 1.
-                data = self._http.get_json(
-                    build_search_url(1, mode), deadline=deadline
-                )
+                data = self._http.get_json(build_search_url(1, mode), deadline=deadline)
                 results = data.get("result", [])
 
         if not isinstance(results, list) or not results:

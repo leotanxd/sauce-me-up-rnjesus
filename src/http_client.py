@@ -41,10 +41,7 @@ from src.request_context import RequestIdLogFilter
 logger = logging.getLogger(__name__)
 logger.addFilter(RequestIdLogFilter())
 
-USER_AGENT = (
-    "SauceMeUpRNJesus/1.0 "
-    "(https://github.com/leotanxd/sauce-me-up-rnjesus)"
-)
+USER_AGENT = "SauceMeUpRNJesus/1.0 (https://github.com/leotanxd/sauce-me-up-rnjesus)"
 
 REQUEST_TIMEOUT_SECONDS = 10
 MAX_RETRIES = 3
@@ -274,7 +271,7 @@ class JsonHttpClient:
                 if retry_after is not None:
                     delay = max(delay, retry_after)
             left = remaining()
-            if left is not None and time.monotonic() + delay > deadline:
+            if left is not None and delay > left:
                 raise RuntimeError("Upstream request deadline exceeded.")
             time.sleep(delay)
 
@@ -309,9 +306,7 @@ class JsonHttpClient:
                 # is a TransportError) are transient: retried, then a
                 # RuntimeError, exactly as the urllib path behaved.
                 if self._metrics is not None:
-                    self._metrics.upstream_call(
-                        endpoint_class, "network_error"
-                    )
+                    self._metrics.upstream_call(endpoint_class, "network_error")
                 last_error = error
 
                 if attempt < MAX_RETRIES:
@@ -319,16 +314,12 @@ class JsonHttpClient:
                     sleep_before_retry(attempt, None)
                     continue
 
-                raise RuntimeError(
-                    f"Could not connect to the API: {error}"
-                ) from error
+                raise RuntimeError(f"Could not connect to the API: {error}") from error
 
             status_code = response.status_code
 
             if self._metrics is not None:
-                self._metrics.upstream_call(
-                    endpoint_class, f"{status_code // 100}xx"
-                )
+                self._metrics.upstream_call(endpoint_class, f"{status_code // 100}xx")
                 if status_code == 429:
                     self._metrics.upstream_rate_limited()
 

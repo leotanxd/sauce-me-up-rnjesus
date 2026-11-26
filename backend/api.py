@@ -14,8 +14,9 @@ live in their own modules:
     src/client.py              NhentaiClient (upstream facade)
 
 Run:
-    pip install -r backend/requirements.txt
-    (installs this repo as a package — see pyproject.toml)
+    pip install -e .
+    (installs this repo as a package — see pyproject.toml;
+    requirements.txt is the hash-locked variant used by Docker/CI)
     uvicorn backend.api:app --reload --port 8000
 
 Endpoints:
@@ -64,9 +65,7 @@ def _run_warm_up(client: NhentaiClient, deadline_seconds: float) -> None:
     failure is logged once and never affects boot or requests; the
     pools refill lazily on demand exactly as before."""
     try:
-        client.warm_up(
-            deadline=time.monotonic() + deadline_seconds
-        )
+        client.warm_up(deadline=time.monotonic() + deadline_seconds)
     except Exception as error:
         logger.warning("Startup warm-up failed: %s", error)
 
@@ -93,9 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # low-water mark and the CDN config refresh TTL.
     client = NhentaiClient(
         http=http,
-        media=MediaUrlBuilder(
-            http, config_ttl_seconds=settings.cdn_config_ttl_seconds
-        ),
+        media=MediaUrlBuilder(http, config_ttl_seconds=settings.cdn_config_ttl_seconds),
         pool=SearchPool(
             http,
             low_water_mark=settings.pool_low_water_mark,

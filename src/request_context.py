@@ -53,10 +53,13 @@ class RequestIdLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         request_id = _request_id.get()
         record.request_id = request_id
-        if request_id and isinstance(record.msg, str):
-            # Guard against double-stamping if a record ever passes
-            # more than one filtered logger.
-            if not getattr(record, "_request_id_stamped", False):
-                record.msg = f"[request_id={request_id}] {record.msg}"
-                record._request_id_stamped = True
+        # Guard against double-stamping if a record ever passes
+        # more than one filtered logger.
+        if (
+            request_id
+            and isinstance(record.msg, str)
+            and not getattr(record, "_request_id_stamped", False)
+        ):
+            record.msg = f"[request_id={request_id}] {record.msg}"
+            record._request_id_stamped = True
         return True

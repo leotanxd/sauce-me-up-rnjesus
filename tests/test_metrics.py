@@ -11,8 +11,10 @@ import threading
 import time
 
 import pytest
-from fastapi import FastAPI
+from conftest import FakeClient, make_detail, make_picker
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from test_pools import StubHttp, search_payload
 
 from backend.api import create_app
 from backend.config import Settings
@@ -24,9 +26,6 @@ from src.errors import ResourceNotFoundError
 from src.http_client import JsonHttpClient
 from src.metrics import Metrics
 from src.pools import FeedMode, SearchPool
-
-from conftest import FakeClient, make_detail, make_picker
-from test_pools import StubHttp, search_payload
 
 
 def counters(metrics: Metrics) -> dict:
@@ -119,9 +118,7 @@ def test_budget_exhaustion_is_counted(fake_transport):
     metrics = Metrics()
     # A near-zero refill rate (a None rate would disable the budget
     # entirely) with a burst of 1: one token exists, then it's gone.
-    http = JsonHttpClient(
-        metrics=metrics, budget_rate_per_minute=0.001, budget_burst=1
-    )
+    http = JsonHttpClient(metrics=metrics, budget_rate_per_minute=0.001, budget_burst=1)
     # Spend the single burst token directly, then the next real
     # call must fail fast on the empty bucket.
     http._consume_budget_token()
@@ -141,9 +138,7 @@ def _session_app(metrics: Metrics):
     app = FastAPI()
     app.add_middleware(RequestIdMiddleware)
     app.include_router(create_sauce_router(picker))
-    app.include_router(
-        create_meta_router(metrics_provider=metrics.snapshot)
-    )
+    app.include_router(create_meta_router(metrics_provider=metrics.snapshot))
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -201,7 +196,7 @@ def test_pick_outcomes_reroll_fallback_and_error():
     # queue (draw failure -> 502 path)... the first transient
     # candidate is kept as fallback, but the draw-queue exhaustion
     # raises before the fallback can serve. Pin the re-rolls.
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPException):
         picker2.next()
     c2 = counters(metrics2)
     assert c2["picks.rerolled"] == 2
@@ -209,7 +204,7 @@ def test_pick_outcomes_reroll_fallback_and_error():
     metrics3 = Metrics()
     dead = FakeClient(draws=[RuntimeError("upstream down")])
     picker3 = make_picker(dead, metrics=metrics3)
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPException):
         picker3.next()
     assert counters(metrics3)["picks.error"] == 1
 
@@ -220,9 +215,7 @@ def test_fallback_serve_is_counted():
     # falls back to serving the first candidate unverified.
     draws = list(range(41, 49))
     details = {gid: RuntimeError("transient") for gid in draws}
-    picker = make_picker(
-        FakeClient(draws=draws, details=details), metrics=metrics
-    )
+    picker = make_picker(FakeClient(draws=draws, details=details), metrics=metrics)
     picker.next()
     c = counters(metrics)
     assert c["picks.fallback"] == 1
@@ -257,9 +250,7 @@ def test_request_id_minted_and_echoed():
 
 def test_request_id_propagated_from_the_caller():
     client = _session_app(Metrics())
-    response = client.get(
-        "/api/metrics", headers={"X-Request-ID": "leo-test-123"}
-    )
+    response = client.get("/api/metrics", headers={"X-Request-ID": "leo-test-123"})
     assert response.headers["x-request-id"] == "leo-test-123"
 
 
@@ -381,9 +372,7 @@ def test_warm_up_primes_pools_and_cdn_config(fake_transport, search_page):
     # production mark of 5 — background refills would consume the
     # scripted outcomes out of order (they have their own tests).
     http = JsonHttpClient()
-    client = NhentaiClient(
-        http=http, pool=SearchPool(http, low_water_mark=0)
-    )
+    client = NhentaiClient(http=http, pool=SearchPool(http, low_water_mark=0))
     client.warm_up(deadline=time.monotonic() + 10)
     assert len(fake_transport.calls) == 3
 

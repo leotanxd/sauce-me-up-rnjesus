@@ -125,9 +125,7 @@ def make_detail(
                 {"number": i + 1, "path": f"galleries/{gallery_id}/{i + 1}.jpg"}
                 for i in range(pages)
             ],
-            "tags": [
-                {"type": "language", "name": lang} for lang in languages
-            ],
+            "tags": [{"type": "language", "name": lang} for lang in languages],
         },
         gallery_id,
     )
@@ -183,7 +181,9 @@ class FakeClient:
 
     def build_media_url(self, relative_media_path, deadline=None):
         if relative_media_path in self._media_fail_paths:
-            raise RuntimeError(f"FakeClient: CDN build failed for {relative_media_path}")
+            raise RuntimeError(
+                f"FakeClient: CDN build failed for {relative_media_path}"
+            )
         return f"https://cdn.example/{relative_media_path}"
 
     def build_gallery_url(self, gallery):

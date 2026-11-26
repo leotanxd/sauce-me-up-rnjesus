@@ -16,7 +16,7 @@ import webbrowser
 from src.client import NhentaiClient
 from src.errors import ResourceNotFoundError
 
-__all__ = ["SauceGenerator", "ResourceNotFoundError"]
+__all__ = ["ResourceNotFoundError", "SauceGenerator"]
 
 
 class SauceGenerator(NhentaiClient):

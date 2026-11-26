@@ -4,11 +4,11 @@ import threading
 import time
 
 import pytest
+from conftest import FakeClient, make_detail, make_picker
 from fastapi import HTTPException
 
 from backend.config import Settings
 from backend.stores import RecentServedStore
-from conftest import FakeClient, make_detail, make_picker
 from src.errors import ResourceNotFoundError
 
 NOT_FOUND = ResourceNotFoundError("gone")
@@ -65,9 +65,7 @@ def test_detail_404_is_never_served():
 
 
 def test_all_transient_failures_serve_the_first_unverified_once():
-    client = FakeClient(
-        draws=[1, 2] * 4, details={1: TRANSIENT, 2: TRANSIENT}
-    )
+    client = FakeClient(draws=[1, 2] * 4, details={1: TRANSIENT, 2: TRANSIENT})
     picker = make_picker(client)
     item = picker.next()
     assert item.id == 1  # the first transient failure, as the fallback
@@ -76,9 +74,7 @@ def test_all_transient_failures_serve_the_first_unverified_once():
 
 def test_all_404_raises_502_and_remembers_nothing():
     recent = RecentServedStore()
-    client = FakeClient(
-        draws=[1, 2] * 4, details={1: NOT_FOUND, 2: NOT_FOUND}
-    )
+    client = FakeClient(draws=[1, 2] * 4, details={1: NOT_FOUND, 2: NOT_FOUND})
     picker = make_picker(client, recent=recent)
     with pytest.raises(HTTPException) as excinfo:
         picker.next()
@@ -103,9 +99,7 @@ def test_batch_partial_failure_accounting():
 
 
 def test_batch_with_nothing_served_raises_502():
-    client = FakeClient(
-        draws=[1, 2] * 8, details={1: NOT_FOUND, 2: NOT_FOUND}
-    )
+    client = FakeClient(draws=[1, 2] * 8, details={1: NOT_FOUND, 2: NOT_FOUND})
     picker = make_picker(client)
     with pytest.raises(HTTPException) as excinfo:
         picker.batch(2)
@@ -131,9 +125,7 @@ def test_pages_404_maps_to_404():
 
 
 def test_pages_url_build_failure_is_all_or_nothing_502():
-    picker = make_picker(
-        FakeClient(media_fail_paths={"galleries/5/2.jpg"})
-    )
+    picker = make_picker(FakeClient(media_fail_paths={"galleries/5/2.jpg"}))
     with pytest.raises(HTTPException) as excinfo:
         picker.pages(5)
     assert excinfo.value.status_code == 502
@@ -193,9 +185,7 @@ def test_concurrent_batches_never_serve_a_duplicate():
 
 def test_batch_deadline_cut_submits_nothing():
     client = FakeClient(draws=[1, 2, 3])
-    picker = make_picker(
-        client, settings=Settings(batch_budget_seconds=0.0)
-    )
+    picker = make_picker(client, settings=Settings(batch_budget_seconds=0.0))
     with pytest.raises(HTTPException) as excinfo:
         picker.batch(3)
     assert excinfo.value.status_code == 502

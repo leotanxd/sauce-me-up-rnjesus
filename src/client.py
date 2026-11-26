@@ -71,9 +71,7 @@ class NhentaiClient:
                     first_error = error
 
         for mode in FeedMode:
-            attempt(
-                lambda mode=mode: self._pool.next(mode=mode, deadline=deadline)
-            )
+            attempt(lambda mode=mode: self._pool.next(mode=mode, deadline=deadline))
         attempt(lambda: self._media.fetch_config(deadline=deadline))
         if first_error is not None:
             raise first_error

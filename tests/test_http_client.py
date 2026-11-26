@@ -190,9 +190,7 @@ def test_500_storm_does_not_set_a_cooldown(client, fake_transport):
 
 def test_budget_bounds_requests_and_refills_over_time(fake_transport):
     clock = _FakeClock()
-    client = JsonHttpClient(
-        clock=clock, budget_rate_per_minute=60.0, budget_burst=2
-    )
+    client = JsonHttpClient(clock=clock, budget_rate_per_minute=60.0, budget_burst=2)
     for n in (1, 2, 3):
         fake_transport.push_json({"n": n})
     assert client.get_json(URL) == {"n": 1}
@@ -208,9 +206,7 @@ def test_budget_bounds_requests_and_refills_over_time(fake_transport):
 
 def test_budget_counts_retries_as_requests(fake_transport):
     clock = _FakeClock()
-    client = JsonHttpClient(
-        clock=clock, budget_rate_per_minute=60.0, budget_burst=2
-    )
+    client = JsonHttpClient(clock=clock, budget_rate_per_minute=60.0, budget_burst=2)
     fake_transport.push_http(500)
     fake_transport.push_http(500)
     fake_transport.push_json({"ok": True})

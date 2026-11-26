@@ -9,6 +9,7 @@ client-facing text. All state arrives by injection (client, stores,
 settings), so the policy is testable without HTTP.
 """
 
+import contextlib
 import contextvars
 import logging
 import threading
@@ -82,9 +83,7 @@ class SaucePicker:
 
         if owner:
             try:
-                detail = self._client.get_gallery_details(
-                    gallery_id, deadline=deadline
-                )
+                detail = self._client.get_gallery_details(gallery_id, deadline=deadline)
                 # Cache BEFORE completing the flight: a caller who
                 # arrives after the flight is cleared hits the cache
                 # instead of starting a second fetch.
@@ -108,9 +107,7 @@ class SaucePicker:
         # transient detail failure (re-roll / 502 upstream).
         try:
             timeout = (
-                None
-                if deadline is None
-                else max(0.0, deadline - time.monotonic())
+                None if deadline is None else max(0.0, deadline - time.monotonic())
             )
             return flight.result(timeout=timeout)
         except TimeoutError:
@@ -124,9 +121,7 @@ class SaucePicker:
             # The flight bookkeeping itself failed (the shared
             # future was cancelled): fall back to fetching directly
             # rather than failing a pick over shared-state plumbing.
-            detail = self._client.get_gallery_details(
-                gallery_id, deadline=deadline
-            )
+            detail = self._client.get_gallery_details(gallery_id, deadline=deadline)
             self._details.put(gallery_id, detail)
             return detail
 
@@ -295,9 +290,7 @@ class SaucePicker:
             return self._batch(n, mode)
         finally:
             if self._metrics is not None:
-                self._metrics.observe_batch_duration(
-                    time.monotonic() - started
-                )
+                self._metrics.observe_batch_duration(time.monotonic() - started)
 
     def _batch(self, n: int, mode: FeedMode = FeedMode.RANDOM) -> BatchOut:
         # One overall deadline for the batch: return what was
@@ -385,9 +378,7 @@ class SaucePicker:
         try:
             detail = self._get_detail(gallery_id, deadline=deadline)
         except ResourceNotFoundError as error:
-            raise HTTPException(
-                status_code=404, detail="Gallery not found."
-            ) from error
+            raise HTTPException(status_code=404, detail="Gallery not found.") from error
         except Exception as error:
             logger.warning("Detail fetch for %s failed: %s", gallery_id, error)
             raise HTTPException(
@@ -399,9 +390,7 @@ class SaucePicker:
         urls: list[str] = []
         for path in detail.page_paths:
             try:
-                urls.append(
-                    self._client.build_media_url(path, deadline=deadline)
-                )
+                urls.append(self._client.build_media_url(path, deadline=deadline))
             except Exception as error:
                 # All-or-nothing: a silently dropped middle page would
                 # shift every later "Page X of Y" label off the truth.
@@ -416,14 +405,10 @@ class SaucePicker:
             # Fallback: at least the first page/cover, as the feed gets.
             first_path = detail.first_media_path()
             if first_path:
-                try:
+                with contextlib.suppress(Exception):
                     urls.append(
                         self._client.build_media_url(first_path, deadline=deadline)
                     )
-                except Exception:
-                    pass
         if not urls:
-            raise HTTPException(
-                status_code=502, detail="No page images available."
-            )
+            raise HTTPException(status_code=502, detail="No page images available.")
         return PagesOut(id=gallery_id, count=len(urls), images=urls)

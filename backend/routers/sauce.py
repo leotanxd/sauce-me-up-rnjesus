@@ -7,6 +7,7 @@ calls on demand when the user pages through a sauce.
 """
 
 from fastapi import APIRouter, Path, Query
+
 from src.pools import FeedMode
 
 from ..picker import SaucePicker

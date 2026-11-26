@@ -64,9 +64,7 @@ def test_config_refreshes_after_ttl_and_host_stays_stable(fake_transport):
     clock = _FakeClock()
     fake_transport.push_json(CONFIG)
     fake_transport.push_json(CONFIG)  # the refresh, same server list
-    builder = make_builder(
-        fake_transport, config_ttl_seconds=100.0, clock=clock
-    )
+    builder = make_builder(fake_transport, config_ttl_seconds=100.0, clock=clock)
     before = builder.url_for(PAGE_PATH)
     assert len(fake_transport.calls) == 1
 
@@ -82,9 +80,7 @@ def test_config_refreshes_after_ttl_and_host_stays_stable(fake_transport):
 def test_failed_refresh_serves_the_stale_config(fake_transport):
     clock = _FakeClock()
     fake_transport.push_json(CONFIG)
-    builder = make_builder(
-        fake_transport, config_ttl_seconds=100.0, clock=clock
-    )
+    builder = make_builder(fake_transport, config_ttl_seconds=100.0, clock=clock)
     before = builder.url_for(PAGE_PATH)
 
     clock.advance(101)  # TTL expired; the refresh attempt fails

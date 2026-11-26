@@ -12,6 +12,7 @@ evicting least-recently-stored first at capacity, with an
 injectable clock for tests.
 """
 
+import contextlib
 import threading
 import time
 from collections import deque
@@ -45,10 +46,8 @@ class RecentServedStore:
         """Release a reservation: a failed pick leaves no trace."""
         with self.lock:
             self._set.discard(gallery_id)
-            try:
+            with contextlib.suppress(ValueError):
                 self._ids.remove(gallery_id)
-            except ValueError:
-                pass
 
 
 class DetailCache:

@@ -1,6 +1,7 @@
 """GallerySummary / GalleryDetail parsing from recorded-shape fixtures."""
 
 from conftest import load_fixture
+
 from src.models import GalleryDetail, GallerySummary
 
 
@@ -50,8 +51,8 @@ def test_detail_strip_gallery_pages_pass_through_verbatim():
     # Insurance for the strip (webtoon) rendering fix: the backend
     # already serves these galleries correctly — the fixture
     # mirrors gallery 491558's real payload shape, trimmed to 6
-    # pages (two normal 300×420, one 750×400 landscape, three
-    # 720-wide strips up to 720×17404) and listed out of order.
+    # pages (two normal 300x420, one 750x400 landscape, three
+    # 720-wide strips up to 720x17404) and listed out of order.
     # The parser must return every page path in page-number order
     # and count the raw list — never collapsing or dropping the
     # strip pages.
@@ -88,9 +89,7 @@ def test_display_title_priority(gallery_detail, search_page):
     assert detail.display_title(summary) == "First Gallery"
     assert detail.display_title() == "First Gallery (English)"
 
-    pretty_only = GalleryDetail.from_detail(
-        {"title": {"pretty": "Only Pretty"}}, 5
-    )
+    pretty_only = GalleryDetail.from_detail({"title": {"pretty": "Only Pretty"}}, 5)
     assert pretty_only.display_title() == "Only Pretty"
     assert GalleryDetail.empty(5).display_title() == "Untitled"
 

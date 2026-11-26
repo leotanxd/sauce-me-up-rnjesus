@@ -50,9 +50,7 @@ def test_assets_get_immutable():
 
 def test_spa_shell_revalidates():
     assert _cache_control_values(_run(_dummy_app(), "/")) == [REVALIDATE]
-    assert _cache_control_values(_run(_dummy_app(), "/index.html")) == [
-        REVALIDATE
-    ]
+    assert _cache_control_values(_run(_dummy_app(), "/index.html")) == [REVALIDATE]
 
 
 def test_api_paths_are_never_stamped():

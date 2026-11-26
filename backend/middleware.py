@@ -42,7 +42,8 @@ class CacheHeadersMiddleware:
                 # with the policy value (never a duplicate, never an
                 # overwrite of a different policy).
                 headers = [
-                    (k, v) for k, v in message.get("headers", [])
+                    (k, v)
+                    for k, v in message.get("headers", [])
                     if k.lower() != b"cache-control"
                 ]
                 headers.append((b"cache-control", header.encode()))
@@ -56,9 +57,7 @@ def _usable_request_id(value: str) -> bool:
     """An inbound X-Request-ID worth propagating: short printable
     ASCII. Anything else is replaced with a minted ID — the header
     is echoed back and stamped into logs, so it stays tame."""
-    return 0 < len(value) <= 128 and all(
-        32 <= ord(char) < 127 for char in value
-    )
+    return 0 < len(value) <= 128 and all(32 <= ord(char) < 127 for char in value)
 
 
 class RequestIdMiddleware:
@@ -82,15 +81,14 @@ class RequestIdMiddleware:
             if key.lower() == b"x-request-id":
                 incoming = value.decode("latin-1")
                 break
-        request_id = (
-            incoming if _usable_request_id(incoming) else new_request_id()
-        )
+        request_id = incoming if _usable_request_id(incoming) else new_request_id()
         token = set_request_id(request_id)
 
         async def send_with_header(message):
             if message["type"] == "http.response.start":
                 headers = [
-                    (k, v) for k, v in message.get("headers", [])
+                    (k, v)
+                    for k, v in message.get("headers", [])
                     if k.lower() != b"x-request-id"
                 ]
                 headers.append((b"x-request-id", request_id.encode("latin-1")))

@@ -90,9 +90,7 @@ class MediaUrlBuilder:
         config fetch serially. Raises like a first fetch would."""
         self._config(deadline=deadline)
 
-    def url_for(
-        self, relative_media_path: str, deadline: float | None = None
-    ) -> str:
+    def url_for(self, relative_media_path: str, deadline: float | None = None) -> str:
         if not relative_media_path:
             raise RuntimeError("The API did not provide a media path.")
 
@@ -115,9 +113,7 @@ class MediaUrlBuilder:
                 cdn_data.get("thumb_servers"),
             ]
 
-        servers = next(
-            (s for s in candidates if isinstance(s, list) and s), None
-        )
+        servers = next((s for s in candidates if isinstance(s, list) and s), None)
         if not servers:
             raise RuntimeError("The API did not provide an available CDN server.")
 

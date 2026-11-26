@@ -3,7 +3,7 @@
 
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException
 
@@ -31,19 +31,17 @@ def build_health(
     if last_success_at is None:
         upstream_status, stamp = "unknown", None
     else:
-        stamp = datetime.fromtimestamp(last_success_at, timezone.utc).strftime(
+        stamp = datetime.fromtimestamp(last_success_at, UTC).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
-        upstream_status = (
-            "ok" if now - last_success_at <= fresh_seconds else "stale"
-        )
+        upstream_status = "ok" if now - last_success_at <= fresh_seconds else "stale"
     upstream = {
         "lastSuccessAt": stamp,
         "upstreamStatus": upstream_status,
     }
     if cooldown_until is not None:
         upstream["cooldownUntil"] = datetime.fromtimestamp(
-            cooldown_until, timezone.utc
+            cooldown_until, UTC
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
         "status": "ok",

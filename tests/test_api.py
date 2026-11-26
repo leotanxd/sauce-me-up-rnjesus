@@ -25,7 +25,9 @@ class StubPicker:
     def next(self, mode=FeedMode.RANDOM, deadline=None):
         self.calls.append(("next", mode))
         if self.fail_next:
-            raise HTTPException(status_code=502, detail="Upstream returned no galleries.")
+            raise HTTPException(
+                status_code=502, detail="Upstream returned no galleries."
+            )
         return SauceOut(
             id=7,
             title="Stub Gallery",
@@ -94,7 +96,10 @@ def test_batch_passes_mode_through(client, stub):
     assert stub.calls[-1] == ("batch", 3, FeedMode.POPULAR)
 
 
-@pytest.mark.parametrize("url", ["/api/sauce/batch?mode=banana", "/api/sauce/batch?n=0", "/api/sauce/batch?n=11"])
+@pytest.mark.parametrize(
+    "url",
+    ["/api/sauce/batch?mode=banana", "/api/sauce/batch?n=0", "/api/sauce/batch?n=11"],
+)
 def test_invalid_query_params_are_422(client, url):
     assert client.get(url).status_code == 422
 
@@ -118,9 +123,7 @@ def test_picker_502_surfaces(client, stub):
         "/api/sauce/100000001/pages",  # beyond the generous ceiling
     ],
 )
-def test_pages_rejects_out_of_bounds_ids_without_calling_the_picker(
-    client, stub, url
-):
+def test_pages_rejects_out_of_bounds_ids_without_calling_the_picker(client, stub, url):
     # Package 2: absurd gallery IDs are 422 at the route — no picker
     # call, so no upstream request is spent on them.
     assert client.get(url).status_code == 422
