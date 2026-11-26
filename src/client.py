@@ -50,6 +50,34 @@ class NhentaiClient:
         None when the client is not cooling down after a 429/403."""
         return self._http.cooldown_until()
 
+    def warm_up(self, deadline: float | None = None) -> None:
+        """Prime the caches a first visitor would otherwise pay for
+        serially: one pool refill per feed mode, then the CDN config
+        fetch. Every step is attempted even if an earlier one fails
+        (a dead search endpoint says nothing about the CDN config);
+        the first failure is re-raised at the end for the caller —
+        the app's startup thread — to log once. The priming draws
+        are discarded: they never enter the picker's recent-served
+        window, so nothing is hidden from the feed by warming up.
+        """
+        first_error: Exception | None = None
+
+        def attempt(step) -> None:
+            nonlocal first_error
+            try:
+                step()
+            except Exception as error:
+                if first_error is None:
+                    first_error = error
+
+        for mode in FeedMode:
+            attempt(
+                lambda mode=mode: self._pool.next(mode=mode, deadline=deadline)
+            )
+        attempt(lambda: self._media.fetch_config(deadline=deadline))
+        if first_error is not None:
+            raise first_error
+
     def get_gallery_details(
         self, gallery_id: int, deadline: float | None = None
     ) -> GalleryDetail:

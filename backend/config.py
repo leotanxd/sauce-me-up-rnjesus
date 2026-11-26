@@ -54,6 +54,15 @@ class Settings:
     # "unknown". 15 min matches the free service's idle spin-down, so
     # a live process that has served traffic recently reads "ok".
     health_fresh_seconds: float = 900.0
+    # Metrics (Package 4): the in-process registry + /api/metrics.
+    # The counters are the tuning evidence for the Package 2/3
+    # defaults above; disabling drops the endpoint and the counting.
+    metrics_enabled: bool = True
+    # Startup warm-up (Package 4): after boot, a daemon thread primes
+    # the search pools and the CDN config under this one deadline, so
+    # the first visitor after a spin-down doesn't pay those fetches
+    # serially. Best-effort — a failed warm-up never blocks boot.
+    warm_up_deadline_seconds: float = 10.0
     # Local dev origins for the Vite dev server.
     cors_origins: tuple = ("http://localhost:5173", "http://127.0.0.1:5173")
     # Client-facing failure text. Internal exception details go to the

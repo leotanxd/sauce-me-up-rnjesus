@@ -191,10 +191,13 @@ class FakeClient:
         return f"https://nhentai.net/g/{gallery_id}/"
 
 
-def make_picker(client, settings=None, recent=None, details=None) -> SaucePicker:
+def make_picker(
+    client, settings=None, recent=None, details=None, metrics=None
+) -> SaucePicker:
     return SaucePicker(
         client=client,
         recent=recent if recent is not None else RecentServedStore(),
         details=details if details is not None else DetailCache(),
         settings=settings if settings is not None else Settings(),
+        metrics=metrics,
     )

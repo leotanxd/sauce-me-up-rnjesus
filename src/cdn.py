@@ -84,6 +84,12 @@ class MediaUrlBuilder:
             self._fetched_at = self._clock()
             return fresh
 
+    def fetch_config(self, deadline: float | None = None) -> None:
+        """Fetch (or refresh) the CDN config now — the startup
+        warm-up's seam, so the first real URL build doesn't pay the
+        config fetch serially. Raises like a first fetch would."""
+        self._config(deadline=deadline)
+
     def url_for(
         self, relative_media_path: str, deadline: float | None = None
     ) -> str:
