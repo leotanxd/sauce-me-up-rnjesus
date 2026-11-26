@@ -39,14 +39,33 @@ def test_detail_cache_hit_before_ttl_and_miss_after():
     assert cache.get(1) is None
 
 
-def test_detail_cache_put_at_capacity_clears():
-    # Existing semantics, documented by this test: a put into a full
-    # cache clears everything rather than evicting one entry.
-    cache = DetailCache(max_entries=2, clock=lambda: 0.0)
+def test_detail_cache_put_at_capacity_evicts_only_the_oldest():
+    # Package 3 LRU semantics (replaces the old clear-all behaviour):
+    # a put into a full cache evicts the single oldest entry; the
+    # recently-stored entries survive.
+    now = [0.0]
+    cache = DetailCache(max_entries=2, clock=lambda: now[0])
     cache.put(1, "a")
+    now[0] += 1
     cache.put(2, "b")
+    now[0] += 1
     cache.put(3, "c")
     assert cache.get(1) is None
+    assert cache.get(2) == "b"
+    assert cache.get(3) == "c"
+
+
+def test_detail_cache_reput_refreshes_the_eviction_order():
+    now = [0.0]
+    cache = DetailCache(max_entries=2, clock=lambda: now[0])
+    cache.put(1, "a")
+    now[0] += 1
+    cache.put(2, "b")
+    now[0] += 1
+    cache.put(1, "a2")  # re-storing 1 makes 2 the oldest entry
+    now[0] += 1
+    cache.put(3, "c")
+    assert cache.get(1) == "a2"
     assert cache.get(2) is None
     assert cache.get(3) == "c"
 

@@ -8,7 +8,8 @@ the same ID); verification work happens outside the lock, and
 forget() releases a reservation when a pick fails outright.
 
 DetailCache — a bounded, TTL'd cache of parsed gallery details,
-with an injectable clock for tests.
+evicting least-recently-stored first at capacity, with an
+injectable clock for tests.
 """
 
 import threading
@@ -77,6 +78,15 @@ class DetailCache:
     def put(self, gallery_id: int, detail) -> None:
         now = self._clock()
         with self._lock:
-            if len(self._entries) >= self._max:
-                self._entries.clear()
+            if gallery_id not in self._entries:
+                # At capacity, evict only the oldest entries (by
+                # stored timestamp) until there is room — the rest
+                # of the cache, including entries the feed is about
+                # to ask for, survives. (Was: clear everything.)
+                while self._entries and len(self._entries) >= self._max:
+                    oldest = min(
+                        self._entries,
+                        key=lambda gid: self._entries[gid][0],
+                    )
+                    del self._entries[oldest]
             self._entries[gallery_id] = (now, detail)
