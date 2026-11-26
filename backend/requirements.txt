@@ -1,3 +1,0 @@
-# Installs the package in pyproject.toml (runtime deps live there).
-# Test deps: pip install -e ".[test]"
--e .
