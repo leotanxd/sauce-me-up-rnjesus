@@ -48,7 +48,7 @@ decision that divergence is acceptable:
 
 | Per-process state | Where it lives | What breaks if it diverges |
 | --- | --- | --- |
-| No-repeat window (last ~300 served IDs) | `RecentServedStore` (`backend/stores.py`) | The same gallery can be served by two processes back-to-back; batches stay internally duplicate-free only |
+| No-repeat window (last ~1000 served IDs) | `RecentServedStore` (`backend/stores.py`) | The same gallery can be served by two processes back-to-back; batches stay internally duplicate-free only |
 | Gallery detail cache (TTL + LRU) | `DetailCache` (`backend/stores.py`) | Just extra upstream detail fetches — wasteful, not incorrect |
 | Search-result pools, per feed mode | `SearchPool` (`src/pools.py`) | Extra search fetches; modes stay correct per process |
 | Upstream 429/403 cooldown + request budget | `JsonHttpClient` (`src/http_client.py`) | Each process keeps its own cooldown and spends its own full budget — total upstream pressure multiplies by the process count, defeating both protections |

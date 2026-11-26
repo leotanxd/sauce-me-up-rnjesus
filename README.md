@@ -20,8 +20,10 @@ it's working.)
 
 - **Random | Popular modes** — draw from the whole catalogue, or from
   what's popular this week.
-- **No repeats within a session** — the last 300 sauces served are
-  remembered, so scrolling never loops back on itself.
+- **No repeats** — the last 1000 sauces served are remembered
+  server-side, and your browser remembers the last 500 per mode
+  across visits, so scrolling never loops back on itself — not
+  even after a refresh.
 - **Batches of 3, generated concurrently** — the feed tops itself up
   as you approach the end, so there's always another card.
 - **Blur on by default** — every image starts blurred; tap the image
@@ -112,7 +114,7 @@ service.
     lock, all network work happens outside the lock, and batches
     generate in parallel (concurrency cap 4) without ever serving a
     duplicate.
-  - `stores` — the no-repeat window (last 300 served) and the
+  - `stores` — the no-repeat window (last 1000 served) and the
     detail cache (300s TTL, max 128 entries).
   - Pydantic response schemas, so the wire format is explicit.
   - **Cache-header policy** — `/assets/*` is served immutable (the

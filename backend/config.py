@@ -12,7 +12,13 @@ from dataclasses import dataclass
 class Settings:
     # No-repeat memory window: IDs served recently are skipped, so a
     # batch never contains duplicates and a refresh shows new sauces.
-    recent_max: int = 300
+    # Widened 300 -> 1000 as cheap insurance: the window is shared by
+    # every visitor and churned by kept re-roll reservations, so a
+    # bigger window lengthens the post-refresh grace while this
+    # process lives. It is still in-process only — a restart wipes
+    # it; the durable cross-refresh memory is the client's persisted
+    # seen list (frontend/src/lib/seenSauce.ts).
+    recent_max: int = 1000
     # Wall-clock budgets (seconds).
     pick_budget_seconds: float = 20.0
     batch_budget_seconds: float = 45.0
