@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sauce-me-up-rnjesus"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.165.0",
+  "uvicorn[standard]==0.54.0",
+  # Runtime since Package 3: the pooled upstream transport
+  # (sauce_me_up/upstream/http_client.py). Exact-pinned like the other runtime deps.
+  "httpx==0.28.1",
+]
+
+[project.scripts]
+sauce-me-up = "sauce_me_up.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+# Dev-only tooling (Package 5): the test suite plus the lint/type
+# gates CI runs. Exact versions + hashes are frozen in
+# requirements-dev.txt; these floors are the human-edited source.
+dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.14"]
+
+[tool.setuptools]
+packages = ["sauce_me_up", "sauce_me_up.routes", "sauce_me_up.upstream"]
+
+# Lint/format gate (Package 5). The rule selection is explicit so a
+# ruff upgrade cannot silently widen it; broaden deliberately.
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+  # FastAPI's Depends()/Query()/Path() calls in parameter defaults
+  # are the framework's documented idiom, not a mutable-default bug.
+  "B008",
+]
+
+# Type check (Package 5): permissive initial config — real errors
+# fail CI, but untyped defs and missing third-party stubs do not.
+[tool.mypy]
+ignore_missing_imports = true
+warn_unused_ignores = true
+# The pydantic plugin teaches mypy the models' populate_by_name /
+# alias semantics (sauce_me_up/schemas.py), which plain mypy misreads
+# as unexpected-kwarg errors.
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
