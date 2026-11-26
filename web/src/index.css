@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+/* Dark by default — requirement 1. The Film Camera template's light
+   tokens are replaced with a true-black feed theme. */
+@theme {
+  --color-background: oklch(0 0 0);
+  --color-foreground: oklch(0.985 0 0);
+  --color-muted-foreground: oklch(0.708 0 0);
+  --color-border: oklch(0.269 0 0);
+  /* The one warm accent (Interaction Refresh §3): active mode,
+     focus rings, and the single primary action. ~5.5:1 on black;
+     black text on the fill sits at ~5.9:1. */
+  --color-ember: #FF5A26;
+  --color-ember-bright: #FF6F43; /* hover lift for the filled accent */
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  background: #000;
+  color: var(--color-foreground);
+  overscroll-behavior: none;
+}
+
+/* TikTok-like feed — requirement 2: vertical scroll-snap, one card per screen */
+.sauce-feed {
+  height: 100dvh;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+}
+.sauce-feed::-webkit-scrollbar { display: none; }
+
+.sauce-card {
+  height: 100dvh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+/* Swipe layer (the card's tap-to-toggle button): the browser keeps
+   vertical scrolling native (pan-y) and streams horizontal movement
+   to the pointer handlers — so horizontal swipes page the gallery
+   without ever fighting the feed's vertical scroll-snap. */
+.sauce-card .sauce-swipe-layer { touch-action: pan-y; }
+
+/* Strip pages (webtoon-style tall images) scroll vertically
+   inside the card; hide the scroller's scrollbar to match the
+   feed's chrome-free aesthetic. touch-action comes from the
+   .sauce-swipe-layer rule above (the scroller carries that class
+   as the card's gesture surface); overscroll-behavior stays at
+   the default so a pan past the strip's end chains into the
+   feed's snap container and moves one card. */
+.strip-scroll { scrollbar-width: none; }
+.strip-scroll::-webkit-scrollbar { display: none; }
+
+/* Blur toggle — requirement 3: heavy blur + slight zoom so edges don't leak */
+.sauce-img { transition: filter 300ms ease, transform 300ms ease; }
+.sauce-img.is-blurred { filter: blur(28px); transform: scale(1.12); }
+.sauce-img.is-clear { filter: blur(0); transform: scale(1); }
+
+/* Page-turn slide-fade: applied to the wrapper around .sauce-img
+   (the img's own transform belongs to the blur scale above). The
+   incoming page settles in from the side it conceptually comes
+   from — next page from the right, previous from the left. The
+   classes set only `animation` (no static transform/opacity), so
+   they are visually inert once the one-shot keyframe has run. */
+@keyframes page-in-next {
+  from { transform: translateX(48px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+@keyframes page-in-prev {
+  from { transform: translateX(-48px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+.page-anim-next { animation: page-in-next 240ms cubic-bezier(0.22, 0.61, 0.36, 1); }
+.page-anim-prev { animation: page-in-prev 240ms cubic-bezier(0.22, 0.61, 0.36, 1); }
+
+/* Image zoom layer: sits inside the slide wrapper around the img
+   and is the ONLY element the image-zoom transform touches (the
+   wrapper's transform belongs to the slide keyframes above, the
+   img's to the blur scale). No transition at base — a live pinch
+   or pan must track the fingers 1:1; discrete changes (double-tap,
+   wheel, keys, reset) add .is-animating for a short ease. The
+   reduced-motion block below collapses that transition like every
+   other. */
+.sauce-zoom-layer { }
+.sauce-zoom-layer.is-animating { transition: transform 200ms ease; }
+
+/* UI zoom (Ctrl+Shift+wheel): the CSS zoom property applied per
+   chrome group — header, right column, caption, error panels,
+   ModeToggle, the feed error bar. `zoom` is a layout zoom: the
+   element's size, padding and positioning offsets all resolve at
+   the scaled value, so groups scale rigidly and proportionally
+   (the rail↔Dim gap scales with them and can never overlap), and
+   hit-testing follows the visual box exactly. The value comes
+   from SauceFeed's wrapper via --ui-zoom; unset (the empty/loading
+   screen) it resolves to 1. Never applied to the img, the zoom
+   layer, the slide wrapper, the strip scroller, the tap layer, or
+   any scroll/snap geometry. */
+.ui-zoom { zoom: var(--ui-zoom, 1); }
+
+/* Mode-switch entrance: the incoming feed (or switch-loading
+   screen) fades/rises in instead of hard-cutting. The outgoing
+   fade is a SauceFeed-side transition on the same <main>; this
+   keyframe covers the arrival. Transform/opacity only. */
+@keyframes feed-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.feed-swap-in { animation: feed-in 200ms ease-out; }
+
+/* Small screens: a slightly longer slide so the turn registers
+   mid-gesture on a phone. Travel stays 48px (proportionally larger
+   on a narrow screen already). Must stay BEFORE the reduced-motion
+   block below so its `animation: none` still wins. */
+@media (max-width: 639px) {
+  .page-anim-next, .page-anim-prev { animation-duration: 300ms; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sauce-img { transition: none; }
+  .page-anim-next, .page-anim-prev { animation: none; }
+  .feed-swap-in { animation: none; }
+  /* Every remaining transition in the app is a component-level
+     Tailwind utility (chrome fades, control colours, press scale);
+     collapse them all to instant rather than listing each. */
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
