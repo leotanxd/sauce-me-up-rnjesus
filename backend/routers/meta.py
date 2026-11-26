@@ -11,6 +11,7 @@ def build_health(
     last_success_at: float | None,
     fresh_seconds: float,
     now: float | None = None,
+    cooldown_until: float | None = None,
 ) -> dict:
     """The /api/health body: app status plus observed upstream contact.
 
@@ -19,6 +20,11 @@ def build_health(
     "ok" (a success within the freshness window), "stale" (a success
     exists but is older), or "unknown" (no upstream call has succeeded
     since process start; lastSuccessAt is then null).
+
+    ``cooldown_until`` (wall clock) is informational: while the
+    shared upstream cooldown is active it is reported as
+    upstream.cooldownUntil; the key is absent otherwise, so the
+    body's shape is unchanged in normal operation.
     """
     now = time.time() if now is None else now
     if last_success_at is None:
@@ -30,12 +36,17 @@ def build_health(
         upstream_status = (
             "ok" if now - last_success_at <= fresh_seconds else "stale"
         )
+    upstream = {
+        "lastSuccessAt": stamp,
+        "upstreamStatus": upstream_status,
+    }
+    if cooldown_until is not None:
+        upstream["cooldownUntil"] = datetime.fromtimestamp(
+            cooldown_until, timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
         "status": "ok",
-        "upstream": {
-            "lastSuccessAt": stamp,
-            "upstreamStatus": upstream_status,
-        },
+        "upstream": upstream,
     }
 
 

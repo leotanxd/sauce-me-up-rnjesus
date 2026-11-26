@@ -45,6 +45,11 @@ class NhentaiClient:
         (any endpoint), or None if none has succeeded yet."""
         return self._http.last_success_at
 
+    def upstream_cooldown_until(self) -> float | None:
+        """Wall-clock time the shared upstream cooldown ends, or
+        None when the client is not cooling down after a 429/403."""
+        return self._http.cooldown_until()
+
     def get_gallery_details(
         self, gallery_id: int, deadline: float | None = None
     ) -> GalleryDetail:

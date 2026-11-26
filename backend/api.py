@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.client import NhentaiClient
+from src.http_client import JsonHttpClient
 
 from .config import Settings
 from .middleware import CacheHeadersMiddleware
@@ -51,7 +52,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the app with fresh stores and a fresh upstream client."""
     settings = settings if settings is not None else Settings()
 
-    client = NhentaiClient()
+    # The transport carries the Package 2 protections (shared
+    # 429/403 cooldown + global request budget), tuned from Settings.
+    http = JsonHttpClient(
+        cooldown_default_seconds=settings.upstream_cooldown_default_seconds,
+        forbidden_cooldown_seconds=settings.upstream_forbidden_cooldown_seconds,
+        budget_rate_per_minute=settings.global_budget_rate_per_minute,
+        budget_burst=settings.global_budget_burst,
+    )
+    client = NhentaiClient(http=http)
     picker = SaucePicker(
         client=client,
         recent=RecentServedStore(maxlen=settings.recent_max),
@@ -73,10 +82,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def health_provider() -> dict:
         # Observed upstream contact only — health never probes (a
-        # probe would burn anonymous upstream quota).
+        # probe would burn anonymous upstream quota). The cooldown
+        # field appears only while a 429/403 cooldown is active.
         return build_health(
             client.upstream_last_success_at(),
             settings.health_fresh_seconds,
+            cooldown_until=client.upstream_cooldown_until(),
         )
 
     # Real API routes first; the meta router's /api/{path} catch-all

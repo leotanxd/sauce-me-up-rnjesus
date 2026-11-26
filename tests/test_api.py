@@ -110,6 +110,29 @@ def test_picker_502_surfaces(client, stub):
     assert client.get("/api/sauce/next").status_code == 502
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/api/sauce/0/pages",  # IDs start at 1
+        "/api/sauce/-5/pages",  # negative is a client bug, not a lookup
+        "/api/sauce/100000001/pages",  # beyond the generous ceiling
+    ],
+)
+def test_pages_rejects_out_of_bounds_ids_without_calling_the_picker(
+    client, stub, url
+):
+    # Package 2: absurd gallery IDs are 422 at the route — no picker
+    # call, so no upstream request is spent on them.
+    assert client.get(url).status_code == 422
+    assert stub.calls == []
+
+
+def test_pages_accepts_an_in_bounds_id(client, stub):
+    response = client.get("/api/sauce/5/pages")
+    assert response.status_code == 200
+    assert stub.calls[-1] == ("pages", 5)
+
+
 def test_create_app_constructs_without_network():
     app = create_app()
     assert app.title.startswith("Sauce Me Up")
@@ -147,3 +170,11 @@ def test_health_stale_after_the_freshness_window_but_still_200():
     )
     assert response.status_code == 200  # upstream state is never app death
     assert response.json()["upstream"]["upstreamStatus"] == "stale"
+
+
+def test_health_reports_the_cooldown_only_while_it_is_active():
+    # Package 2: an active 429/403 cooldown is informational health
+    # data; the key appears only while a cooldown is in effect.
+    body = build_health(None, 900.0, cooldown_until=time.time() + 120)
+    assert body["upstream"]["cooldownUntil"].endswith("Z")
+    assert "cooldownUntil" not in build_health(None, 900.0)["upstream"]

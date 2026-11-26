@@ -25,6 +25,21 @@ class Settings:
     # /pages for the same gallery usually follows seconds later.
     detail_ttl_seconds: float = 300.0
     detail_cache_max: int = 128
+    # Shared upstream cooldown (Package 2): after a 429, new upstream
+    # calls fail fast for at least this long — the actual window is
+    # the longest of this floor, the response's Retry-After, and the
+    # client's own backoff, all observed signals (no quota figure is
+    # assumed anywhere). A 403 earns the much longer forbidden
+    # cooldown: a refusal is a closed door, not a passing storm.
+    upstream_cooldown_default_seconds: float = 5.0
+    upstream_forbidden_cooldown_seconds: float = 300.0
+    # Global upstream request budget (Package 2): a token bucket in
+    # the HTTP client bounds total upstream requests (one token per
+    # attempt) no matter how many visitors arrive. Deliberately
+    # generous starting values — they bound storms, not normal use;
+    # tighten with Package 4's metrics, not with folklore.
+    global_budget_rate_per_minute: float = 120.0
+    global_budget_burst: int = 40
     # /api/health freshness window: an upstream success within this
     # many seconds reports "ok"; older is "stale"; none yet is
     # "unknown". 15 min matches the free service's idle spin-down, so

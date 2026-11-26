@@ -6,11 +6,16 @@ full page list is available only through /pages, which the frontend
 calls on demand when the user pages through a sauce.
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Path, Query
 from src.pools import FeedMode
 
 from ..picker import SaucePicker
 from ..schemas import BatchOut, PagesOut, SauceOut
+
+# Real gallery IDs are ~7 digits. The ceiling is generous headroom,
+# not a catalogue fact: anything beyond it (or below 1) is a client
+# bug, answered 422 without spending an upstream call on it.
+MAX_GALLERY_ID = 100_000_000
 
 
 def create_sauce_router(picker: SaucePicker) -> APIRouter:
@@ -31,7 +36,9 @@ def create_sauce_router(picker: SaucePicker) -> APIRouter:
         return picker.batch(n, mode=mode)
 
     @router.get("/api/sauce/{gallery_id}/pages", response_model=PagesOut)
-    def sauce_pages(gallery_id: int) -> PagesOut:
+    def sauce_pages(
+        gallery_id: int = Path(ge=1, le=MAX_GALLERY_ID),
+    ) -> PagesOut:
         return picker.pages(gallery_id)
 
     return router

@@ -95,3 +95,132 @@ def test_last_success_at_recorded_on_success_only(client, fake_urlopen):
     client.get_json(URL)
     assert client.last_success_at is not None
     assert before <= client.last_success_at <= time.time()
+
+
+# --- Package 2: shared cooldown + global request budget -------------------
+# The cooldown/budget clock is injectable precisely so these tests can
+# advance time by hand instead of sleeping.
+
+
+class _FakeClock:
+    def __init__(self, start: float = 1000.0):
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_429_storm_sets_a_cooldown_new_calls_fail_fast_in(fake_urlopen):
+    clock = _FakeClock()
+    client = JsonHttpClient(clock=clock)
+    for _ in range(3):
+        fake_urlopen.push_http(429, {"Retry-After": "30"})
+    with pytest.raises(RuntimeError):
+        client.get_json(URL)
+    assert len(fake_urlopen.calls) == 3  # the storm call used its retries
+    assert client.cooldown_until() is not None
+
+    # Inside the window a new call spends NO request at all.
+    fake_urlopen.push_json({"ok": True})
+    with pytest.raises(RuntimeError):
+        client.get_json(URL)
+    assert len(fake_urlopen.calls) == 3
+
+    # After the window (Retry-After was 30s) calls flow again.
+    clock.advance(31)
+    assert client.cooldown_until() is None
+    assert client.get_json(URL) == {"ok": True}
+    assert len(fake_urlopen.calls) == 4
+
+
+def test_cooldown_uses_the_configured_floor_without_retry_after(fake_urlopen):
+    clock = _FakeClock()
+    client = JsonHttpClient(clock=clock, cooldown_default_seconds=42.0)
+    for _ in range(3):
+        fake_urlopen.push_http(429)  # no Retry-After header at all
+    with pytest.raises(RuntimeError):
+        client.get_json(URL)
+    until = client.cooldown_until()
+    assert until is not None
+    # Floor is 42s: still cooling at +20s of clock time...
+    clock.advance(20)
+    assert client.cooldown_until() is not None
+    # ...and clear once past it (backoff alone is < 10s, so only the
+    # floor can explain the window's length).
+    clock.advance(30)
+    assert client.cooldown_until() is None
+
+
+def test_403_sets_the_long_forbidden_cooldown(fake_urlopen):
+    clock = _FakeClock()
+    client = JsonHttpClient(clock=clock, forbidden_cooldown_seconds=300.0)
+    fake_urlopen.push_http(403)
+    with pytest.raises(RuntimeError):
+        client.get_json(URL)
+    until = client.cooldown_until()
+    assert until is not None
+    assert time.time() + 250 < until < time.time() + 310
+
+    fake_urlopen.push_json({"ok": True})
+    with pytest.raises(RuntimeError):
+        client.get_json(URL)  # fail fast, no request spent
+    assert len(fake_urlopen.calls) == 1
+
+    clock.advance(301)
+    assert client.get_json(URL) == {"ok": True}
+
+
+def test_500_storm_does_not_set_a_cooldown(client, fake_urlopen):
+    # 5xx is retried per-call as before, but it is not a rate-limit
+    # signal: no shared cooldown follows from it.
+    for _ in range(3):
+        fake_urlopen.push_http(500)
+    with pytest.raises(RuntimeError):
+        client.get_json(URL)
+    assert client.cooldown_until() is None
+    fake_urlopen.push_json({"ok": True})
+    assert client.get_json(URL) == {"ok": True}
+
+
+def test_budget_bounds_requests_and_refills_over_time(fake_urlopen):
+    clock = _FakeClock()
+    client = JsonHttpClient(
+        clock=clock, budget_rate_per_minute=60.0, budget_burst=2
+    )
+    for n in (1, 2, 3):
+        fake_urlopen.push_json({"n": n})
+    assert client.get_json(URL) == {"n": 1}
+    assert client.get_json(URL) == {"n": 2}
+    with pytest.raises(RuntimeError):
+        client.get_json(URL)  # burst spent: fail fast
+    assert len(fake_urlopen.calls) == 2  # refused before any request
+
+    clock.advance(1.0)  # 60/min refills exactly one token per second
+    assert client.get_json(URL) == {"n": 3}
+    assert len(fake_urlopen.calls) == 3
+
+
+def test_budget_counts_retries_as_requests(fake_urlopen):
+    clock = _FakeClock()
+    client = JsonHttpClient(
+        clock=clock, budget_rate_per_minute=60.0, budget_burst=2
+    )
+    fake_urlopen.push_http(500)
+    fake_urlopen.push_http(500)
+    fake_urlopen.push_json({"ok": True})
+    # Two attempts spend the whole burst; the third attempt of the
+    # SAME call is refused by the budget, not by the upstream.
+    with pytest.raises(RuntimeError):
+        client.get_json(URL)
+    assert len(fake_urlopen.calls) == 2
+
+
+def test_budget_can_be_disabled_with_no_rate(fake_urlopen):
+    client = JsonHttpClient(budget_rate_per_minute=None, budget_burst=1)
+    for _ in range(3):
+        fake_urlopen.push_json({"ok": True})
+        assert client.get_json(URL) == {"ok": True}
+    assert len(fake_urlopen.calls) == 3
