@@ -8,9 +8,20 @@ limited to the first page.
 
 Modes: FeedMode.RANDOM (the whole English catalogue, newest-first
 pages) and FeedMode.POPULAR (the API's popular-week sort — currently
-very popular). The pool owns its lock; callers never hold one.
+very popular).
+
+Concurrency (Package 3): each mode has its OWN lock, and no lock is
+ever held across network I/O. A refill in flight is marked per mode;
+draws for the other mode proceed unimpeded, and draws for the
+refilling mode wait on that mode's condition instead of starting a
+duplicate fetch. When a draw leaves a pool below the low-water mark,
+a daemon thread refills it in the background, so the synchronous
+refill path (empty pool) becomes rare. There is deliberately no
+ready-queue of verified items — background work only ever tops up
+the raw search pools.
 """
 
+import logging
 import random
 import threading
 from enum import StrEnum
@@ -19,7 +30,16 @@ from urllib.parse import urlencode
 from src.http_client import JsonHttpClient
 from src.models import GallerySummary
 
+logger = logging.getLogger(__name__)
+
 SEARCH_URL = "https://nhentai.net/api/v2/search"
+
+# When a draw leaves fewer than this many galleries in a mode's
+# pool, a background refill starts (backend.config.Settings carries
+# the same value as pool_low_water_mark and the composition root
+# passes it in; this default keeps direct construction — CLI,
+# tests — on the same behaviour). 0 disables background refills.
+DEFAULT_LOW_WATER_MARK = 5
 
 
 class FeedMode(StrEnum):
@@ -42,29 +62,64 @@ def build_search_url(page: int = 1, mode: FeedMode = FeedMode.RANDOM) -> str:
     return f"{SEARCH_URL}?{urlencode(params)}"
 
 
+class _ModeState:
+    """One mode's pool and its coordination state.
+
+    The condition's lock guards pool/num_pages/refilling only —
+    never network I/O. ``refilling`` marks a fetch in flight (a
+    synchronous refill by a drawing thread, or a background top-up);
+    while it is set, draws that find the pool empty wait on the
+    condition rather than duplicating the fetch.
+    """
+
+    __slots__ = ("pool", "num_pages", "refilling", "condition")
+
+    def __init__(self):
+        self.pool: list = []
+        self.num_pages: int | None = None
+        self.refilling = False
+        self.condition = threading.Condition()
+
+
 class SearchPool:
     """Hands out galleries from per-mode shuffled result pools."""
 
-    def __init__(self, http: JsonHttpClient):
+    def __init__(
+        self,
+        http: JsonHttpClient,
+        low_water_mark: int = DEFAULT_LOW_WATER_MARK,
+    ):
         self._http = http
-        self._num_pages: dict[FeedMode, int | None] = {m: None for m in FeedMode}
-        self._pool: dict[FeedMode, list] = {m: [] for m in FeedMode}
-        self._lock = threading.Lock()
+        self._low_water_mark = low_water_mark
+        self._states: dict[FeedMode, _ModeState] = {
+            m: _ModeState() for m in FeedMode
+        }
 
-    def _refill(self, mode: FeedMode, deadline: float | None = None) -> None:
-        """Fetch one random search page and pool ALL its results.
+    def _fetch_page(
+        self, mode: FeedMode, deadline: float | None = None
+    ) -> list:
+        """Fetch one random search page; return its shuffled summaries.
 
-        Caller must hold self._lock (internal contract of this class).
+        Performs network I/O and must NOT be called with the mode's
+        lock held. Learns the mode's page count on the first fetch
+        (written back under the lock; the value is identical whoever
+        learns it first, so a concurrent learner is harmless).
         """
-        if self._num_pages[mode] is None:
+        state = self._states[mode]
+        num_pages = state.num_pages
+        if num_pages is None:
             data = self._http.get_json(build_search_url(1, mode), deadline=deadline)
-            num_pages = data.get("num_pages")
-            self._num_pages[mode] = (
-                num_pages if isinstance(num_pages, int) and num_pages > 0 else 1
-            )
+            learned = data.get("num_pages")
+            with state.condition:
+                if state.num_pages is None:
+                    state.num_pages = (
+                        learned
+                        if isinstance(learned, int) and learned > 0
+                        else 1
+                    )
             results = data.get("result", [])
         else:
-            page = random.randint(1, self._num_pages[mode])
+            page = random.randint(1, num_pages)
             data = self._http.get_json(
                 build_search_url(page, mode), deadline=deadline
             )
@@ -86,14 +141,82 @@ class SearchPool:
             for summary in (GallerySummary.from_search_item(g) for g in results)
             if summary is not None
         ]
+        if not pool:
+            # A page whose items all failed to parse is as unusable
+            # as an empty page.
+            raise RuntimeError(
+                "No English-language galleries were returned by the API."
+            )
         random.shuffle(pool)
-        self._pool[mode] = pool
+        return pool
+
+    def _background_refill(self, mode: FeedMode) -> None:
+        """Daemon-thread body: top up one mode's pool off the draw path.
+
+        Failure is not fatal — the pool keeps serving what it has and
+        the next empty draw refills synchronously, as before.
+        """
+        state = self._states[mode]
+        page = None
+        try:
+            page = self._fetch_page(mode)
+        except Exception:
+            logger.warning(
+                "Background refill of the %s search pool failed; "
+                "it will refill on demand instead.",
+                mode.value,
+            )
+        with state.condition:
+            if page:
+                state.pool.extend(page)
+                random.shuffle(state.pool)
+            state.refilling = False
+            state.condition.notify_all()
 
     def next(
         self, mode: FeedMode = FeedMode.RANDOM, deadline: float | None = None
     ) -> GallerySummary:
         """Return one gallery from the mode's pool, refilling if empty."""
-        with self._lock:
-            if not self._pool[mode]:
-                self._refill(mode, deadline=deadline)
-            return self._pool[mode].pop()
+        state = self._states[mode]
+        start_background = False
+        while True:
+            with state.condition:
+                if state.pool:
+                    item = state.pool.pop()
+                    if (
+                        self._low_water_mark > 0
+                        and len(state.pool) < self._low_water_mark
+                        and not state.refilling
+                    ):
+                        state.refilling = True
+                        start_background = True
+                    break
+                if state.refilling:
+                    # A fetch for this mode is already in flight;
+                    # wait for it to land instead of duplicating it.
+                    state.condition.wait()
+                    continue
+                state.refilling = True
+            # This thread owns the synchronous refill. The fetch runs
+            # WITHOUT the lock: the other mode never notices, and
+            # this mode's waiters are woken when it lands.
+            try:
+                page = self._fetch_page(mode, deadline=deadline)
+            except BaseException:
+                with state.condition:
+                    state.refilling = False
+                    state.condition.notify_all()
+                raise
+            with state.condition:
+                state.pool.extend(page)
+                state.refilling = False
+                state.condition.notify_all()
+            # Loop around and pop from the refilled pool.
+        if start_background:
+            threading.Thread(
+                target=self._background_refill,
+                args=(mode,),
+                name=f"searchpool-refill-{mode.value}",
+                daemon=True,
+            ).start()
+        return item

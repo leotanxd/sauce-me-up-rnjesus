@@ -1,5 +1,8 @@
 """SearchPool: drain-before-refetch, per-mode pools, page fallback."""
 
+import threading
+import time
+
 from src.http_client import JsonHttpClient
 from src.pools import FeedMode, SearchPool
 
@@ -18,51 +21,54 @@ def search_payload(ids, num_pages=5):
     }
 
 
-def make_pool(fake_urlopen):
-    return SearchPool(JsonHttpClient())
+def make_pool(fake_transport):
+    # low_water_mark=0: these tests pin the drain/fallback semantics;
+    # background refills are covered by the dedicated tests below
+    # (a background thread would race the scripted call counts here).
+    return SearchPool(JsonHttpClient(), low_water_mark=0)
 
 
-def test_pool_drains_a_page_before_refetching(fake_urlopen):
+def test_pool_drains_a_page_before_refetching(fake_transport):
     ids = list(range(1000, 1025))  # one full 25-item page
-    fake_urlopen.push_json(search_payload(ids))
-    pool = make_pool(fake_urlopen)
+    fake_transport.push_json(search_payload(ids))
+    pool = make_pool(fake_transport)
 
     served = {pool.next().id for _ in range(25)}
     assert served == set(ids)
-    assert len(fake_urlopen.calls) == 1  # one search served all 25 picks
+    assert len(fake_transport.calls) == 1  # one search served all 25 picks
 
-    fake_urlopen.push_json(search_payload([2000]))
+    fake_transport.push_json(search_payload([2000]))
     assert pool.next().id == 2000
-    assert len(fake_urlopen.calls) == 2  # refetch only once drained
+    assert len(fake_transport.calls) == 2  # refetch only once drained
 
 
-def test_empty_random_page_falls_back_to_page_one(fake_urlopen):
-    fake_urlopen.push_json(search_payload([1], num_pages=3))
-    pool = make_pool(fake_urlopen)
+def test_empty_random_page_falls_back_to_page_one(fake_transport):
+    fake_transport.push_json(search_payload([1], num_pages=3))
+    pool = make_pool(fake_transport)
     assert pool.next().id == 1
-    assert len(fake_urlopen.calls) == 1
+    assert len(fake_transport.calls) == 1
 
     # Refill: the random page comes back empty, page 1 is the fallback.
-    fake_urlopen.push_json({"num_pages": 3, "result": []})
-    fake_urlopen.push_json(search_payload([2], num_pages=3))
+    fake_transport.push_json({"num_pages": 3, "result": []})
+    fake_transport.push_json(search_payload([2], num_pages=3))
     assert pool.next().id == 2
-    assert len(fake_urlopen.calls) == 3
-    assert "page=1" in fake_urlopen.calls[-1]
+    assert len(fake_transport.calls) == 3
+    assert "page=1" in fake_transport.calls[-1]
 
 
-def test_modes_have_independent_pools_and_sorts(fake_urlopen):
-    fake_urlopen.push_json(search_payload([10]))
-    fake_urlopen.push_json(search_payload([20]))
-    pool = make_pool(fake_urlopen)
+def test_modes_have_independent_pools_and_sorts(fake_transport):
+    fake_transport.push_json(search_payload([10]))
+    fake_transport.push_json(search_payload([20]))
+    pool = make_pool(fake_transport)
 
     assert pool.next(mode=FeedMode.RANDOM).id == 10
     assert pool.next(mode=FeedMode.POPULAR).id == 20
-    random_url, popular_url = fake_urlopen.calls
+    random_url, popular_url = fake_transport.calls
     assert "sort=" not in random_url
     assert "sort=popular-week" in popular_url
 
 
-def test_items_with_unusable_ids_are_dropped_at_parse(fake_urlopen):
+def test_items_with_unusable_ids_are_dropped_at_parse(fake_transport):
     payload = {
         "num_pages": 1,
         "result": [
@@ -71,7 +77,108 @@ def test_items_with_unusable_ids_are_dropped_at_parse(fake_urlopen):
             {"id": 7, "english_title": "usable", "thumbnail": "g/7/thumb.jpg"},
         ],
     }
-    fake_urlopen.push_json(payload)
-    pool = make_pool(fake_urlopen)
+    fake_transport.push_json(payload)
+    pool = make_pool(fake_transport)
     assert pool.next().id == 7
-    assert len(fake_urlopen.calls) == 1
+    assert len(fake_transport.calls) == 1
+
+
+# --- Package 3: refill out of the lock + low-water background refill -------
+# These use a stub get_json client (SearchPool only needs that one
+# method) so fetches can be gated on events deterministically.
+
+
+class StubHttp:
+    """get_json stand-in: handler(url, call_number) -> payload."""
+
+    def __init__(self, handler):
+        self._handler = handler
+        self.calls: list[str] = []
+        self._lock = threading.Lock()
+
+    def get_json(self, url, deadline=None):
+        with self._lock:
+            self.calls.append(url)
+            number = len(self.calls)
+        return self._handler(url, number)
+
+
+def test_other_mode_draws_while_one_mode_refills():
+    entered = threading.Event()
+    release = threading.Event()
+
+    def handler(url, number):
+        if "sort=popular-week" in url:
+            return search_payload([20])
+        entered.set()
+        assert release.wait(timeout=5)
+        return search_payload([10])
+
+    pool = SearchPool(StubHttp(handler), low_water_mark=0)
+    drawn = []
+    thread = threading.Thread(
+        target=lambda: drawn.append(pool.next(mode=FeedMode.RANDOM).id)
+    )
+    thread.start()
+    assert entered.wait(timeout=5)  # the RANDOM refill is in flight
+
+    # POPULAR has its own lock and pool: its draw must not wait for
+    # the RANDOM mode's network fetch.
+    assert pool.next(mode=FeedMode.POPULAR).id == 20
+
+    release.set()
+    thread.join(timeout=5)
+    assert drawn == [10]
+
+
+def test_low_water_triggers_exactly_one_background_refill():
+    gate = threading.Event()
+
+    def handler(url, number):
+        if number == 2:
+            assert gate.wait(timeout=5)  # hold the background refill open
+        return search_payload([number * 100 + i for i in range(1, 5)])
+
+    stub = StubHttp(handler)
+    pool = SearchPool(stub, low_water_mark=3)
+
+    assert pool.next().id in range(101, 105)  # sync refill: call 1, 3 left
+    pool.next()  # 2 left: below the mark -> background refill starts
+    pool.next()  # 1 left: already refilling, no second fetch
+    pool.next()  # 0 left: still refilling, no third fetch
+    assert len(stub.calls) == 2  # exactly one background refill
+
+    gate.set()
+    # The pool is empty and the refill is in flight: this draw waits
+    # for it to land, then serves from the new page (3 left after).
+    assert pool.next().id in range(201, 205)
+    assert len(stub.calls) == 2
+
+    pool.next()  # 2 left: below the mark again -> one more refill
+    deadline = time.monotonic() + 5
+    while len(stub.calls) < 3 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(stub.calls) == 3
+
+
+def test_background_refill_failure_leaves_pool_usable():
+    gate = threading.Event()
+
+    def handler(url, number):
+        if number == 2:
+            assert gate.wait(timeout=5)
+            raise RuntimeError("upstream down")
+        return search_payload([number * 100 + i for i in range(1, 5)])
+
+    stub = StubHttp(handler)
+    pool = SearchPool(stub, low_water_mark=3)
+
+    pool.next()  # sync refill: call 1, 3 left
+    pool.next()  # 2 left: background refill starts (and will fail)
+    pool.next()  # drain while it is in flight
+    pool.next()  # pool empty, refill still marked in flight
+    gate.set()  # the background refill now fails and clears its mark
+
+    # The next draw falls back to a synchronous refill and serves.
+    assert pool.next().id in range(301, 305)
+    assert len(stub.calls) == 3
