@@ -6,6 +6,13 @@ upstream's Retry-After header, hard deadline support, and mapping HTTP
 statuses to exceptions (404 -> ResourceNotFoundError, 401/403 ->
 RuntimeError, 429/5xx and network errors -> retried, then RuntimeError).
 
+The wire itself is a pooled httpx client (Package 3): connections are
+kept alive and reused across calls instead of paying a fresh TCP+TLS
+handshake per request, and responses are gzip-decoded by httpx. The
+transport sits behind a one-method seam (``get(url, headers, timeout)``
+-> a response with ``status_code`` / ``headers`` / ``content``, raising
+``httpx.TransportError`` on network failure) so tests can script it.
+
 Two process-wide protections live here too, because every upstream
 call (search, detail, CDN config) funnels through get_json:
 
@@ -24,8 +31,9 @@ import logging
 import random
 import threading
 import time
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from collections.abc import Mapping
+
+import httpx
 
 from src.errors import ResourceNotFoundError
 
@@ -53,6 +61,36 @@ DEFAULT_BUDGET_RATE_PER_MINUTE = 120.0
 DEFAULT_BUDGET_BURST = 40
 
 
+class _PooledTransport:
+    """The default transport: one pooled httpx.Client, shared by every
+    thread using this JsonHttpClient (httpx clients are thread-safe).
+
+    Keep-alive connections are reused across upstream calls, and
+    httpx sends Accept-Encoding and decodes gzip responses itself.
+    ``trust_env=False`` keeps the client talking directly to the
+    upstream — no proxy or other environment configuration leaks into
+    upstream traffic. Redirects are followed, as urllib did.
+    """
+
+    def __init__(self):
+        self._client = httpx.Client(
+            trust_env=False,
+            follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+            ),
+        )
+
+    def get(self, url: str, headers: dict, timeout: float):
+        return self._client.get(url, headers=headers, timeout=timeout)
+
+
+def _create_default_transport() -> _PooledTransport:
+    """Factory for the default transport (the tests' patch point)."""
+    return _PooledTransport()
+
+
 class JsonHttpClient:
     """GETs JSON documents with retries, backoff, and deadlines."""
 
@@ -64,7 +102,17 @@ class JsonHttpClient:
         budget_rate_per_minute: float | None = DEFAULT_BUDGET_RATE_PER_MINUTE,
         budget_burst: int = DEFAULT_BUDGET_BURST,
         clock=time.monotonic,
+        transport=None,
     ):
+        # The wire seam: anything with get(url, headers, timeout)
+        # returning a response with .status_code/.headers/.content
+        # and raising httpx.TransportError on network failure. The
+        # default transport is created lazily on first use, so
+        # constructing a client never opens a connection pool (and
+        # tests can patch the factory after construction).
+        self._transport = transport
+        self._default_transport = None
+        self._transport_lock = threading.Lock()
         # Wall-clock time of the last successful upstream response,
         # or None if none has succeeded yet. Every upstream call goes
         # through get_json, so this is the process's observed upstream
@@ -82,6 +130,15 @@ class JsonHttpClient:
         self._cooldown_until = 0.0  # on self._clock; 0 = not cooling
         self._budget_tokens = float(budget_burst)
         self._budget_updated_at = clock()
+
+    def _get_transport(self):
+        """The transport to send through, creating the default once."""
+        if self._transport is not None:
+            return self._transport
+        with self._transport_lock:
+            if self._default_transport is None:
+                self._default_transport = _create_default_transport()
+            return self._default_transport
 
     # -- Shared cooldown ----------------------------------------------
     # Set by whichever call observes a 429/403; checked once at the
@@ -151,11 +208,11 @@ class JsonHttpClient:
         return base_delay + jitter
 
     @staticmethod
-    def _retry_after_seconds(error: HTTPError) -> float | None:
+    def _retry_after_seconds(headers: Mapping | None) -> float | None:
         """The response's Retry-After as seconds, if it parses as one."""
-        if error.headers is None:
+        if headers is None:
             return None
-        retry_after = error.headers.get("Retry-After")
+        retry_after = headers.get("Retry-After")
         if not retry_after:
             return None
         try:
@@ -180,11 +237,11 @@ class JsonHttpClient:
         def remaining() -> float | None:
             return None if deadline is None else deadline - time.monotonic()
 
-        def sleep_before_retry(attempt: int, error: HTTPError | None) -> None:
+        def sleep_before_retry(attempt: int, headers: Mapping | None) -> None:
             delay = self._retry_delay(attempt)
             # Honour the upstream's Retry-After as a floor for the delay.
-            if error is not None:
-                retry_after = self._retry_after_seconds(error)
+            if headers is not None:
+                retry_after = self._retry_after_seconds(headers)
                 if retry_after is not None:
                     delay = max(delay, retry_after)
             left = remaining()
@@ -204,87 +261,20 @@ class JsonHttpClient:
                 if left is None
                 else min(REQUEST_TIMEOUT_SECONDS, left)
             )
-            request = Request(
-                url,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept": "application/json",
-                },
-            )
+            headers = {
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+                # Explicit, though httpx would send and decode gzip
+                # on its own: compression is part of the contract.
+                "Accept-Encoding": "gzip",
+            }
 
             try:
-                with urlopen(request, timeout=timeout) as response:
-                    # Non-200 statuses raise HTTPError via urlopen, so a
-                    # response here is a success.
-                    payload = json.loads(response.read().decode("utf-8"))
-                    self.last_success_at = time.time()
-                    return payload
-
-            except HTTPError as error:
-                status_code = error.code
-                last_error = error
-
-                if status_code == 404:
-                    raise ResourceNotFoundError(
-                        "The requested API resource could not be found."
-                    ) from error
-
-                if status_code == 401:
-                    raise RuntimeError(
-                        "The API rejected the request because authentication "
-                        "is required for this endpoint."
-                    ) from error
-
-                if status_code == 403:
-                    # A refusal is not transient per-request noise:
-                    # put the whole process into the long cooldown so
-                    # subsequent calls fail fast instead of hammering
-                    # a door that just closed.
-                    self._set_cooldown(self._forbidden_cooldown_seconds)
-                    logger.warning(
-                        "Upstream returned 403; entering a %ss cooldown "
-                        "during which new upstream calls fail fast.",
-                        self._forbidden_cooldown_seconds,
-                    )
-                    raise RuntimeError(
-                        "The API refused the request. This endpoint may be "
-                        "restricted or unavailable to this client."
-                    ) from error
-
-                if status_code == 429:
-                    # Signal-driven, never quota-assumed: cool down
-                    # for the longest of the upstream's Retry-After,
-                    # this attempt's own backoff, and the configured
-                    # floor. Set on every 429 — retried or final — so
-                    # the NEXT call fails fast whichever attempt the
-                    # storm was observed on. This call's own retries
-                    # are unaffected (the check is entry-only).
-                    retry_after = self._retry_after_seconds(error)
-                    self._set_cooldown(
-                        max(
-                            retry_after or 0.0,
-                            self._retry_delay(attempt),
-                            self._cooldown_default_seconds,
-                        )
-                    )
-
-                if (status_code == 429 or 500 <= status_code < 600) and (
-                    attempt < MAX_RETRIES
-                ):
-                    logger.warning(
-                        "Upstream HTTP %s on attempt %s; retrying.",
-                        status_code,
-                        attempt,
-                    )
-                    error.close()
-                    sleep_before_retry(attempt, error)
-                    continue
-
-                raise RuntimeError(
-                    f"Could not retrieve data from the API: HTTP {status_code}"
-                ) from error
-
-            except (URLError, TimeoutError, ConnectionError) as error:
+                response = self._get_transport().get(url, headers, timeout)
+            except httpx.TransportError as error:
+                # Connection failures and timeouts (TimeoutException
+                # is a TransportError) are transient: retried, then a
+                # RuntimeError, exactly as the urllib path behaved.
                 last_error = error
 
                 if attempt < MAX_RETRIES:
@@ -296,9 +286,75 @@ class JsonHttpClient:
                     f"Could not connect to the API: {error}"
                 ) from error
 
-            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            status_code = response.status_code
+
+            if status_code == 200:
+                try:
+                    payload = json.loads(response.content.decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                    raise RuntimeError(
+                        "The API returned data that could not be understood."
+                    ) from error
+                self.last_success_at = time.time()
+                return payload
+
+            if status_code == 404:
+                raise ResourceNotFoundError(
+                    "The requested API resource could not be found."
+                )
+
+            if status_code == 401:
                 raise RuntimeError(
-                    "The API returned data that could not be understood."
-                ) from error
+                    "The API rejected the request because authentication "
+                    "is required for this endpoint."
+                )
+
+            if status_code == 403:
+                # A refusal is not transient per-request noise:
+                # put the whole process into the long cooldown so
+                # subsequent calls fail fast instead of hammering
+                # a door that just closed.
+                self._set_cooldown(self._forbidden_cooldown_seconds)
+                logger.warning(
+                    "Upstream returned 403; entering a %ss cooldown "
+                    "during which new upstream calls fail fast.",
+                    self._forbidden_cooldown_seconds,
+                )
+                raise RuntimeError(
+                    "The API refused the request. This endpoint may be "
+                    "restricted or unavailable to this client."
+                )
+
+            if status_code == 429:
+                # Signal-driven, never quota-assumed: cool down
+                # for the longest of the upstream's Retry-After,
+                # this attempt's own backoff, and the configured
+                # floor. Set on every 429 — retried or final — so
+                # the NEXT call fails fast whichever attempt the
+                # storm was observed on. This call's own retries
+                # are unaffected (the check is entry-only).
+                retry_after = self._retry_after_seconds(response.headers)
+                self._set_cooldown(
+                    max(
+                        retry_after or 0.0,
+                        self._retry_delay(attempt),
+                        self._cooldown_default_seconds,
+                    )
+                )
+
+            if (status_code == 429 or 500 <= status_code < 600) and (
+                attempt < MAX_RETRIES
+            ):
+                logger.warning(
+                    "Upstream HTTP %s on attempt %s; retrying.",
+                    status_code,
+                    attempt,
+                )
+                sleep_before_retry(attempt, response.headers)
+                continue
+
+            raise RuntimeError(
+                f"Could not retrieve data from the API: HTTP {status_code}"
+            )
 
         raise RuntimeError(f"Could not retrieve data after retries: {last_error}")

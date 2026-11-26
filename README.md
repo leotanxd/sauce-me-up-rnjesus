@@ -145,7 +145,7 @@ Dockerfile    Single-service image (see DEPLOY.md)
 Prerequisites: Python ≥ 3.11 and Node 20.
 
 ```bash
-pip install -e ".[test]"   # the package plus test deps (pytest, httpx)
+pip install -e ".[test]"   # the package (incl. httpx) plus test deps (pytest)
                            # runtime only: pip install -e .
                            # (backend/requirements.txt does the same)
 

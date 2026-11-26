@@ -9,10 +9,13 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi==0.165.0",
   "uvicorn[standard]==0.54.0",
+  # Runtime since Package 3: the pooled upstream transport
+  # (src/http_client.py). Exact-pinned like the other runtime deps.
+  "httpx==0.28.1",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8", "httpx==0.28.1"]
+test = ["pytest>=8"]
 
 [tool.setuptools]
 packages = ["src", "backend", "backend.routers"]

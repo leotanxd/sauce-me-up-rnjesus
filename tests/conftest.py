@@ -1,21 +1,20 @@
 """Shared fakes for the offline test suite. No live network anywhere.
 
-- ``fake_urlopen``: scripts ``src.http_client.urlopen`` (the name is
-  imported into that module, so it is patched there) and ``time.sleep``
-  (retry backoffs are recorded, not slept — they are seconds long).
+- ``fake_transport``: scripts the transport seam of JsonHttpClient
+  (``src.http_client._create_default_transport`` is patched to hand
+  out the fake) and ``time.sleep`` (retry backoffs are recorded, not
+  slept — they are seconds long).
 - ``FakeClient``: a scripted stand-in for NhentaiClient for picker
   tests — a queue of draws plus per-ID detail outcomes.
 - ``make_picker``: wires a client to real stores + default Settings.
 """
 
-import io
 import json
 import threading
 import time
-from email.message import Message
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 
+import httpx
 import pytest
 
 from backend.config import Settings
@@ -42,21 +41,16 @@ def gallery_detail():
 
 
 class _StubResponse:
-    def __init__(self, body: bytes):
-        self._body = body
+    """The transport seam's response shape: status + headers + body."""
 
-    def read(self) -> bytes:
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
+    def __init__(self, status: int, headers: dict, body: bytes):
+        self.status_code = status
+        self.headers = headers
+        self.content = body
 
 
 class FakeTransport:
-    """A scripted urlopen replacement. Outcomes are consumed in order."""
+    """A scripted transport replacement. Outcomes are consumed in order."""
 
     def __init__(self):
         self.outcomes: list = []
@@ -76,26 +70,23 @@ class FakeTransport:
     def push_url_error(self, reason: str = "connection refused") -> None:
         self.outcomes.append(("urlerror", reason))
 
-    # -- the urlopen / sleep stand-ins -------------------------------
-    def urlopen(self, request, timeout=None):
-        url = request.full_url
+    # -- the transport / sleep stand-ins ------------------------------
+    def get(self, url, headers, timeout=None):
         self.calls.append(url)
         if not self.outcomes:
             raise AssertionError(f"FakeTransport: unscripted request to {url}")
         outcome = self.outcomes.pop(0)
         kind = outcome[0]
         if kind == "json":
-            return _StubResponse(json.dumps(outcome[1]).encode("utf-8"))
+            body = json.dumps(outcome[1]).encode("utf-8")
+            return _StubResponse(200, {}, body)
         if kind == "raw":
-            return _StubResponse(outcome[1])
+            return _StubResponse(200, {}, outcome[1])
         if kind == "http":
             _, status, headers = outcome
-            message = Message()
-            for key, value in headers.items():
-                message[key] = value
-            raise HTTPError(url, status, "stub", message, io.BytesIO(b""))
+            return _StubResponse(status, headers, b"")
         if kind == "urlerror":
-            raise URLError(outcome[1])
+            raise httpx.ConnectError(outcome[1])
         raise AssertionError(f"FakeTransport: unknown outcome {outcome!r}")
 
     def sleep(self, seconds: float) -> None:
@@ -103,9 +94,13 @@ class FakeTransport:
 
 
 @pytest.fixture
-def fake_urlopen(monkeypatch):
+def fake_transport(monkeypatch):
     transport = FakeTransport()
-    monkeypatch.setattr(http_client_module, "urlopen", transport.urlopen)
+    monkeypatch.setattr(
+        http_client_module,
+        "_create_default_transport",
+        lambda: transport,
+    )
     monkeypatch.setattr("time.sleep", transport.sleep)
     return transport
 
