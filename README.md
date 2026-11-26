@@ -5,7 +5,7 @@ the currently popular ones, if you'd rather. Every visit serves up
 different galleries, one full-screen card at a time — no account, no
 setup, just scroll.
 
-> As of 2026, November 25th, this project is currently being released as a public beta prototype, and if for some reason people actually start using this, then I will update the website. Otherwise, I only made this project just for the fun of it, and I might not update it, unless I feel like updating it.
+> As of 2026, November 25th, this project is currently being released as a public beta prototype, and if for some reason people actually start using this, then I will update the website. Otherwise, I only made this project just for the fun of it, and I might not update it, unless I feel like updating it. Also, if you do decide to use it for some reason, then I highly recommend using it on your computer, not your mobile device. The animations are really laggy on mobile devices.
 
 ## ▶ Try it live
 
