@@ -1,6 +1,9 @@
 .git
 **/__pycache__
-frontend/node_modules
-frontend/dist
+**/.pytest_cache
+**/.env
+web/node_modules
+web/dist
+api/tests
 archive
 *.muse-github-snapshot-sync.json
