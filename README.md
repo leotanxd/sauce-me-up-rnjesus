@@ -123,6 +123,12 @@ service.
     `stale` / `unknown` from the last observed upstream success
     (15-minute freshness window). It never probes upstream, so
     health checks cost no quota.
+  - **`/api/metrics` + request IDs** — in-process, low-cardinality
+    counters (upstream calls/retries/429s, cooldown activations,
+    detail-cache hits/misses, pool refills, pick outcomes, batch
+    durations) served as JSON; every request carries an
+    `X-Request-ID` that also prefixes its server log lines, so a
+    client-visible failure can be matched to the logs.
 - **`frontend/`** — Vite + React + Tailwind. All state lives in
   hooks — `useSauceFeed` (feed, modes, blur, dim), `useGalleryPages`
   (per-card paging), `useHorizontalSwipe` (swipe paging),

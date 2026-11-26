@@ -21,9 +21,45 @@ Notes:
   waits ~30-60 s for it to wake. That's normal on the free plan.
 - Every push to `main` triggers a new deploy automatically.
 - A custom domain can be added later under the service's Settings.
+- Render's health check points at `/api/health` (`healthCheckPath` in
+  `render.yaml`). The endpoint only reports observed state — it never
+  probes upstream — so checks cost no upstream quota.
+- `GET /api/metrics` serves the process's in-process counters
+  (upstream calls/retries/429s, cooldown activations, detail-cache
+  hits/misses, pool refills, pick outcomes, batch durations). They
+  reset on every restart; there is no external metrics service.
+- The upstream client talks to the upstream **directly**: it ignores
+  proxy environment variables (`HTTP_PROXY` etc.) by design
+  (`trust_env=False` on the pooled httpx client), so no proxy
+  configuration on the host can leak into or reroute upstream traffic.
 - The no-repeat memory, search-result pool, and caches are **per
   process**: keep the service at one uvicorn worker / one instance, or
-  the "no repeats" window fragments across processes.
+  the "no repeats" window fragments across processes. See
+  "Scaling out" below before changing that.
+
+## Scaling out — read before adding workers or instances
+
+Everything stateful in this app lives **in the one process's memory**.
+That is a deliberate design choice for a single free instance, and it
+means `--workers > 1` or a second instance is NOT safe today: each
+process would keep its own divergent copy of every item below. Before
+scaling out, each one needs a shared home (e.g. Redis) or an explicit
+decision that divergence is acceptable:
+
+| Per-process state | Where it lives | What breaks if it diverges |
+| --- | --- | --- |
+| No-repeat window (last ~300 served IDs) | `RecentServedStore` (`backend/stores.py`) | The same gallery can be served by two processes back-to-back; batches stay internally duplicate-free only |
+| Gallery detail cache (TTL + LRU) | `DetailCache` (`backend/stores.py`) | Just extra upstream detail fetches — wasteful, not incorrect |
+| Search-result pools, per feed mode | `SearchPool` (`src/pools.py`) | Extra search fetches; modes stay correct per process |
+| Upstream 429/403 cooldown + request budget | `JsonHttpClient` (`src/http_client.py`) | Each process keeps its own cooldown and spends its own full budget — total upstream pressure multiplies by the process count, defeating both protections |
+| Detail single-flight map | `SaucePicker` (`backend/picker.py`) | Duplicate in-flight detail fetches across processes (the Package 2 waste returns) |
+| Metrics registry | `Metrics` (`src/metrics.py`) | `/api/metrics` reports only the answering process's counters |
+| CDN config cache | `MediaUrlBuilder` (`src/cdn.py`) | Harmless: one extra config fetch per process per TTL window |
+
+Until that shared-state work is done (it is deliberately not built —
+see the implementation plan's Package 4 notes), run exactly one
+uvicorn worker in exactly one instance, which is what the Dockerfile
+and `render.yaml` do.
 
 ## Option B — the same Docker image anywhere else
 
