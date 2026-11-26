@@ -200,3 +200,53 @@ def test_batch_deadline_cut_submits_nothing():
         picker.batch(3)
     assert excinfo.value.status_code == 502
     assert client.draw_calls == 0
+
+
+# --- Batch hardening: non-HTTP failures + the wall-clock bound -----------
+
+
+class _UrlBoomClient(FakeClient):
+    """Gallery-URL building blows up for one gallery: a RuntimeError
+    escaping _serve, which next() never maps to an HTTPException."""
+
+    def build_gallery_url(self, gallery):
+        if getattr(gallery, "id", gallery) == 2:
+            raise RuntimeError("url build boom")
+        return super().build_gallery_url(gallery)
+
+
+def test_batch_non_http_exception_is_a_counted_error_not_a_500():
+    picker = make_picker(_UrlBoomClient(draws=[1, 2, 3]))
+    result = picker.batch(3)
+    assert result.errors == 1
+    assert sorted(item.id for item in result.items) == [1, 3]
+
+
+class _HangingDetailClient(FakeClient):
+    """Gallery 1's detail fetch blocks until the test releases it —
+    a pick that hangs outright, ignoring the deadline it was given."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.release = threading.Event()
+
+    def get_gallery_details(self, gallery_id, deadline=None):
+        if gallery_id == 1:
+            self.release.wait(timeout=30)
+        return super().get_gallery_details(gallery_id, deadline=deadline)
+
+
+def test_batch_returns_within_budget_when_a_pick_hangs():
+    client = _HangingDetailClient(draws=[1, 2, 3])
+    picker = make_picker(client, settings=Settings(batch_budget_seconds=0.5))
+    started = time.monotonic()
+    try:
+        result = picker.batch(3)
+    finally:
+        client.release.set()  # let the abandoned pick thread finish
+    elapsed = time.monotonic() - started
+    # Acceptance bound: the batch budget (0.5s) + 2s of slack. The
+    # hanging pick must cost an error, not the batch's whole wait.
+    assert elapsed < 2.5
+    assert result.errors >= 1
+    assert sorted(item.id for item in result.items) == [2, 3]

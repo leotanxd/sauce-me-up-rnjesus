@@ -207,11 +207,23 @@ class SaucePicker:
         # cut adds one error and stops submitting; results are
         # collected in submission order, each pick's 502 adding an
         # error. The shared deadline is passed to every pick.
+        #
+        # Collection is hardened two ways. Each future is awaited
+        # with at most the time left in the batch budget, so one
+        # hanging pick costs an error, not the whole batch's wait;
+        # and ANY exception escaping a pick — not just the
+        # HTTPExceptions next() maps deliberately, but e.g. a
+        # RuntimeError from URL building inside _serve — degrades to
+        # a counted error instead of 500ing the batch. The executor
+        # is shut down without waiting: a pick still running past
+        # the deadline finishes (or fails) in the background with
+        # its result discarded, and queued picks are cancelled.
         deadline = time.monotonic() + self._settings.batch_budget_seconds
         cap = max(1, self._settings.batch_concurrency)
         items: list[SauceOut] = []
         errors = 0
-        with ThreadPoolExecutor(max_workers=cap) as executor:
+        executor = ThreadPoolExecutor(max_workers=cap)
+        try:
             in_flight: deque[Future] = deque()
             submitted = 0
             while submitted < n or in_flight:
@@ -226,10 +238,19 @@ class SaucePicker:
                     submitted += 1
                 if not in_flight:
                     break
+                future = in_flight.popleft()
                 try:
-                    items.append(in_flight.popleft().result())
+                    remaining = max(0.0, deadline - time.monotonic())
+                    items.append(future.result(timeout=remaining))
                 except HTTPException:
                     errors += 1
+                except Exception as error:
+                    # Bounded-wait timeout, or a non-HTTP failure
+                    # next() didn't map: a counted error either way.
+                    errors += 1
+                    logger.warning("Batch pick failed: %s", error)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         if not items:
             raise HTTPException(
                 status_code=502, detail="Upstream returned no galleries."
