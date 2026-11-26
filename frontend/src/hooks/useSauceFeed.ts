@@ -3,12 +3,18 @@ import type { FeedMode, Sauce } from "../types"
 import { BATCH_SIZE } from "../lib/config"
 import { fetchNextSauce, fetchSauceBatch } from "../lib/api"
 import { shouldIgnoreArrowKeys } from "../lib/keyboard"
+import { loadSeen, saveSeen, type SeenLists } from "../lib/seenSauce"
 import { useIntersectionObserver } from "./useIntersectionObserver"
 
 /**
  * The feed state machine: batch loading with per-session dedupe,
  * Random | Popular mode switching, infinite scroll, and ↑/↓ keyboard
  * navigation. SauceFeed.tsx is left as pure layout over this state.
+ *
+ * The seen set is backed by the persisted per-mode lists in
+ * lib/seenSauce (localStorage): a refresh — or a server restart,
+ * which wipes the server's own no-repeat window — no longer makes
+ * already-served sauces count as new again.
  *
  * Mode switches are guarded by a generation counter: a load that was
  * in flight when the mode changed discards its results instead of
@@ -24,7 +30,12 @@ export function useSauceFeed() {
   const [activeIndex, setActiveIndex] = useState(0) // card in the viewport
   const loadingRef = useRef(false)
   const nearEndRef = useRef(false) // proximity trigger's zone state (below)
-  const seenRef = useRef<Set<number>>(new Set()) // IDs already in the feed
+  // Persisted per-mode seen lists, loaded lazily on first render;
+  // seenRef starts as the initial mode's (random's) list, so IDs
+  // served in earlier sessions already count as seen.
+  const seenListsRef = useRef<SeenLists | null>(null)
+  if (seenListsRef.current === null) seenListsRef.current = loadSeen()
+  const seenRef = useRef<Set<number>>(new Set(seenListsRef.current.random))
   const sentinelRef = useRef<HTMLDivElement>(null)
   const feedRef = useRef<HTMLDivElement>(null)
   const popularRef = useRef(false)
@@ -37,20 +48,40 @@ export function useSauceFeed() {
     const gen = genRef.current
     const mode: FeedMode = popularRef.current ? "popular" : "random"
     try {
-      // Never show the same sauce twice in one feed session. If a
-      // whole batch comes back already-seen, retry a couple of times
-      // instead of silently dead-ending the feed.
-      let fresh: Sauce[] = []
+      // Never show the same sauce twice. Keep fetching until the
+      // batch is filled or the attempt cap is hit, ACCUMULATING the
+      // fresh items across attempts: with the persisted seen lists,
+      // a batch can legitimately come back mostly-seen (1 fresh of
+      // 3), and stopping at the first non-empty batch would grow
+      // the feed one card at a time. An item the server re-serves
+      // within this same load is accumulated only once (the seen
+      // set itself is updated after the loop).
+      const fresh: Sauce[] = []
+      const freshIds = new Set<number>()
       let sawDuplicates = false
-      for (let attempt = 0; attempt < 3 && fresh.length === 0; attempt++) {
+      for (let attempt = 0; attempt < 5 && fresh.length < n; attempt++) {
         const more = n === 1 ? [await fetchNextSauce(mode)] : await fetchSauceBatch(n, mode)
-        if (more.some((s) => seenRef.current.has(s.id))) sawDuplicates = true
-        fresh = more.filter((s) => !seenRef.current.has(s.id))
+        for (const s of more) {
+          if (seenRef.current.has(s.id)) {
+            sawDuplicates = true
+          } else if (!freshIds.has(s.id)) {
+            freshIds.add(s.id)
+            fresh.push(s)
+          }
+        }
       }
       if (genRef.current !== gen) return // mode switched mid-load — discard
-      fresh.forEach((s) => seenRef.current.add(s.id))
-      if (fresh.length) {
-        setItems((prev) => [...prev, ...fresh])
+      // Append at most n: an over-filled final attempt's extras are
+      // NOT marked seen, so they stay eligible for a later batch.
+      const appended = fresh.slice(0, n)
+      appended.forEach((s) => seenRef.current.add(s.id))
+      if (appended.length) {
+        // Persist the merged seen set for this mode, so the next
+        // session (refresh, tomorrow) starts from it.
+        const lists = seenListsRef.current ?? (seenListsRef.current = loadSeen())
+        lists[mode] = [...seenRef.current]
+        saveSeen(lists)
+        setItems((prev) => [...prev, ...appended])
         setError(null) // a successful load clears any earlier failure notice
       } else if (sawDuplicates) {
         // Every attempt came back already-seen: the supply is
@@ -79,10 +110,16 @@ export function useSauceFeed() {
   const switchMode = useCallback(
     (nextPopular: boolean) => {
       if (nextPopular === popularRef.current) return
+      // Each mode keeps its OWN seen list: stash the outgoing
+      // mode's set into its persisted list and load the incoming
+      // mode's — so switching back re-applies what that mode has
+      // already served, in this and earlier sessions alike.
+      const lists = seenListsRef.current ?? (seenListsRef.current = loadSeen())
+      lists[popularRef.current ? "popular" : "random"] = [...seenRef.current]
+      seenRef.current = new Set(lists[nextPopular ? "popular" : "random"])
       popularRef.current = nextPopular
       setPopular(nextPopular)
       genRef.current += 1 // invalidate any in-flight load
-      seenRef.current.clear()
       setItems([])
       setActiveIndex(0)
       setError(null)

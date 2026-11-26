@@ -10,6 +10,7 @@ vi.mock("../lib/api", () => ({
 }))
 
 import { fetchSauceBatch } from "../lib/api"
+import { SEEN_STORAGE_KEY } from "../lib/seenSauce"
 import { useSauceFeed } from "./useSauceFeed"
 
 const mockBatch = vi.mocked(fetchSauceBatch)
@@ -47,6 +48,9 @@ beforeEach(() => {
   cleanup()
   vi.resetAllMocks()
   IntersectionObserverStub.reset()
+  // The hook persists its seen set: without a wipe, one test's
+  // served IDs would filter the next test's batches.
+  window.localStorage.clear()
 })
 
 describe("useSauceFeed", () => {
@@ -63,8 +67,11 @@ describe("useSauceFeed", () => {
     render(<Harness />)
     await waitFor(() => expect(hook.items).toHaveLength(3))
 
-    // Top-up: first attempt returns only seen IDs, the retry is fresh.
+    // Top-up: first attempt returns only seen IDs, the retry is
+    // fresh. The standing mock answers the loop's remaining
+    // fill attempts with already-seen IDs.
     mockBatch
+      .mockResolvedValue([sauce(1), sauce(2), sauce(3)])
       .mockResolvedValueOnce([sauce(1), sauce(2), sauce(3)])
       .mockResolvedValueOnce([sauce(4), sauce(5)])
     act(() => {
@@ -75,10 +82,18 @@ describe("useSauceFeed", () => {
 
     await waitFor(() => expect(hook.items).toHaveLength(5))
     expect(hook.items.map((s) => s.id)).toEqual([1, 2, 3, 4, 5])
-    expect(mockBatch).toHaveBeenCalledTimes(3)
+    // 1 initial + 5 top-up attempts: the loop now keeps fetching
+    // while the batch is unfilled (2 of 3 after attempt 2), up to
+    // the 5-attempt cap — the standing mock answers the rest with
+    // already-seen IDs, so the count is exact.
+    expect(mockBatch).toHaveBeenCalledTimes(6)
   })
 
   it("discards a stale load that resolves after a mode switch", async () => {
+    // Standing empty batch: a short batch (1 fresh of 3) now tops
+    // up until filled or capped, so in-flight loads need a defined
+    // answer for their follow-up attempts.
+    mockBatch.mockResolvedValue([])
     mockBatch.mockResolvedValueOnce([sauce(1)])
     render(<Harness />)
     await waitFor(() => expect(hook.items).toHaveLength(1))
@@ -163,7 +178,7 @@ describe("useSauceFeed", () => {
     await waitFor(() => expect(hook.items).toHaveLength(3))
     expect(hook.error).toBeNull()
 
-    // Top-up via the sentinel: all 3 internal attempts come back
+    // Top-up via the sentinel: every internal attempt comes back
     // already-seen. The feed must say so — not sit silently on its
     // last card with no error and no way forward.
     act(() => {
@@ -344,9 +359,9 @@ describe("useSauceFeed keyboard load-more", () => {
     pressDown()
     expect(hook.activeIndex).toBe(2)
 
-    // loadMore retries internally (3 attempts), appends nothing,
-    // and settles: 1 initial + 3 attempts, then no more calls.
-    await waitFor(() => expect(mockBatch).toHaveBeenCalledTimes(4))
+    // loadMore retries internally (5 attempts), appends nothing,
+    // and settles: 1 initial + 5 attempts, then no more calls.
+    await waitFor(() => expect(mockBatch).toHaveBeenCalledTimes(6))
     await waitFor(() => expect(hook.loadingMore).toBe(false))
     expect(hook.items).toHaveLength(3)
 
@@ -355,7 +370,7 @@ describe("useSauceFeed keyboard load-more", () => {
     pressDown()
     pressDown()
     await act(async () => {})
-    expect(mockBatch).toHaveBeenCalledTimes(4)
+    expect(mockBatch).toHaveBeenCalledTimes(6)
     expect(hook.items).toHaveLength(3)
   })
 
@@ -383,5 +398,92 @@ describe("useSauceFeed keyboard load-more", () => {
     act(() => hook.retry())
     await waitFor(() => expect(hook.items).toHaveLength(6))
     expect(hook.error).toBeNull()
+  })
+})
+
+describe("useSauceFeed persisted seen list", () => {
+  const seedStorage = (seen: { random: number[]; popular: number[] }) =>
+    window.localStorage.setItem(SEEN_STORAGE_KEY, JSON.stringify(seen))
+
+  it("filters IDs persisted from an earlier session and tops up to fill the batch", async () => {
+    // ID 1 was served before the refresh: it must not come back,
+    // and the short first batch (1 fresh of 2) must trigger a
+    // top-up fetch instead of growing the feed one card at a time.
+    seedStorage({ random: [1], popular: [] })
+    mockBatch
+      .mockResolvedValueOnce([sauce(1), sauce(2)])
+      .mockResolvedValueOnce([sauce(3), sauce(4)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+    expect(hook.items.map((s) => s.id)).toEqual([2, 3, 4])
+    expect(mockBatch).toHaveBeenCalledTimes(2)
+  })
+
+  it("persists the IDs it serves, under the active mode only", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+    const stored = JSON.parse(
+      window.localStorage.getItem(SEEN_STORAGE_KEY) ?? "{}",
+    ) as { random?: number[]; popular?: number[] }
+    expect(stored.random).toEqual([1, 2, 3])
+    expect(stored.popular).toEqual([])
+  })
+
+  it("keeps the modes' seen lists independent across switches", async () => {
+    seedStorage({ random: [], popular: [10] })
+    mockBatch.mockResolvedValue([sauce(10), sauce(11), sauce(12)])
+    render(<Harness />)
+    // Random does NOT filter an ID seen only under Popular.
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+    expect(hook.items.map((s) => s.id)).toEqual([10, 11, 12])
+
+    // Popular DOES filter its own persisted ID, topping up to fill.
+    mockBatch
+      .mockResolvedValueOnce([sauce(10), sauce(13)])
+      .mockResolvedValueOnce([sauce(14), sauce(15)])
+    act(() => hook.switchMode(true))
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+    expect(hook.items.map((s) => s.id)).toEqual([13, 14, 15])
+
+    // Back to Random: its list survived the round trip — 10 was
+    // served there this session, so it is filtered and topped up.
+    mockBatch
+      .mockResolvedValueOnce([sauce(10), sauce(16)])
+      .mockResolvedValueOnce([sauce(17), sauce(18)])
+    act(() => hook.switchMode(false))
+    await waitFor(() => expect(hook.items).toHaveLength(3))
+    expect(hook.items.map((s) => s.id)).toEqual([16, 17, 18])
+  })
+
+  it("still surfaces the exhausted state when every attempt is persisted-seen", async () => {
+    seedStorage({ random: [1, 2, 3], popular: [] })
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    render(<Harness />)
+    await waitFor(() => expect(hook.error).toBe("No new sauce right now."))
+    expect(hook.items).toHaveLength(0)
+    expect(mockBatch).toHaveBeenCalledTimes(5) // the attempt cap
+  })
+
+  it("loads normally when localStorage throws on read and write", async () => {
+    const getSpy = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new Error("storage denied")
+      })
+    const setSpy = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("storage denied")
+      })
+    try {
+      mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+      render(<Harness />)
+      await waitFor(() => expect(hook.items).toHaveLength(3))
+      expect(hook.error).toBeNull()
+    } finally {
+      getSpy.mockRestore()
+      setSpy.mockRestore()
+    }
   })
 })

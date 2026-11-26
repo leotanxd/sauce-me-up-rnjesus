@@ -42,6 +42,9 @@ const dimOffButtons = () =>
 beforeEach(() => {
   vi.resetAllMocks()
   IntersectionObserverStub.reset()
+  // The feed hook persists its seen set in localStorage: wipe it so
+  // one test's served IDs never filter another test's batches.
+  window.localStorage.clear()
   vi.mocked(fetchSaucePages).mockResolvedValue([])
 })
 
