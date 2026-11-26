@@ -100,6 +100,34 @@ class SearchPool:
         self._metrics = metrics
         self._states: dict[FeedMode, _ModeState] = {m: _ModeState() for m in FeedMode}
 
+    def _fetch_random_page(
+        self, mode: FeedMode, num_pages: int, deadline: float | None = None
+    ) -> list:
+        """Fetch one uniformly random page's raw results.
+
+        A stale/empty random page is retried once with a DIFFERENT
+        random page before falling back to page 1: page 1 is the
+        newest ~25 galleries (Random) or the current top ~25
+        (Popular), so re-pooling it is exactly what the cold-start
+        fix avoids — but it remains the last resort, because an
+        empty result set would fail the refill outright.
+        """
+        page = random.randint(1, num_pages)
+        data = self._http.get_json(build_search_url(page, mode), deadline=deadline)
+        results = data.get("result", [])
+        if isinstance(results, list) and results:
+            return results
+        if num_pages > 1:
+            retry = random.randint(1, num_pages - 1)
+            if retry >= page:
+                retry += 1  # a different page, still uniform
+            data = self._http.get_json(build_search_url(retry, mode), deadline=deadline)
+            results = data.get("result", [])
+            if isinstance(results, list) and results:
+                return results
+        data = self._http.get_json(build_search_url(1, mode), deadline=deadline)
+        return data.get("result", [])
+
     def _fetch_page(self, mode: FeedMode, deadline: float | None = None) -> list:
         """Fetch one random search page; return its shuffled summaries.
 
@@ -107,6 +135,15 @@ class SearchPool:
         lock held. Learns the mode's page count on the first fetch
         (written back under the lock; the value is identical whoever
         learns it first, so a concurrent learner is harmless).
+
+        Cold start: the learning fetch is page 1 by necessity (the
+        page count only exists inside a response), but when the
+        catalogue has more than one page its results are DISCARDED
+        and a uniformly random page is pooled instead — pooling
+        page 1 on every process start made each restart serve the
+        same recognisable cluster (the newest ~25 for Random, the
+        top ~25 for Popular). A single-page catalogue pools the
+        learning page directly: it is the only page there is.
         """
         state = self._states[mode]
         num_pages = state.num_pages
@@ -118,15 +155,14 @@ class SearchPool:
                     state.num_pages = (
                         learned if isinstance(learned, int) and learned > 0 else 1
                     )
-            results = data.get("result", [])
-        else:
-            page = random.randint(1, num_pages)
-            data = self._http.get_json(build_search_url(page, mode), deadline=deadline)
-            results = data.get("result", [])
-            if not isinstance(results, list) or not results:
-                # Stale/empty page — fall back to page 1.
-                data = self._http.get_json(build_search_url(1, mode), deadline=deadline)
+                num_pages = state.num_pages
+            if num_pages > 1:
+                # Discard the learning page; pool a random one.
+                results = self._fetch_random_page(mode, num_pages, deadline)
+            else:
                 results = data.get("result", [])
+        else:
+            results = self._fetch_random_page(mode, num_pages, deadline)
 
         if not isinstance(results, list) or not results:
             raise RuntimeError(

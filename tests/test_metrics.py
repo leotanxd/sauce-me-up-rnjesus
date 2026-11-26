@@ -364,8 +364,13 @@ def test_warm_up_primes_pools_and_cdn_config(fake_transport, search_page):
         "image_servers": ["https://i.example"],
         "thumb_servers": ["https://t.example"],
     }
-    fake_transport.push_json(search_page)  # random refill
-    fake_transport.push_json(search_page)  # popular refill
+    # Per mode the warm-up refill is TWO search calls since the
+    # repeat fix: a learning fetch (its page is discarded) plus the
+    # random page that actually pools.
+    fake_transport.push_json(search_page)  # random: learning fetch
+    fake_transport.push_json(search_page)  # random: pooled page
+    fake_transport.push_json(search_page)  # popular: learning fetch
+    fake_transport.push_json(search_page)  # popular: pooled page
     fake_transport.push_json(cdn_payload)  # CDN config
 
     # low_water_mark=0: the fixture page holds 3 items, below the
@@ -374,14 +379,14 @@ def test_warm_up_primes_pools_and_cdn_config(fake_transport, search_page):
     http = JsonHttpClient()
     client = NhentaiClient(http=http, pool=SearchPool(http, low_water_mark=0))
     client.warm_up(deadline=time.monotonic() + 10)
-    assert len(fake_transport.calls) == 3
+    assert len(fake_transport.calls) == 5
 
     # The first real draws now cost ZERO search fetches: both pools
     # are already warm.
     client.get_random_english_gallery(mode=FeedMode.RANDOM)
     client.get_random_english_gallery(mode=FeedMode.POPULAR)
     search_calls = [u for u in fake_transport.calls if "/search" in u]
-    assert len(search_calls) == 2  # only the warm-up's own refills
+    assert len(search_calls) == 4  # only the warm-up's own refills
 
 
 def test_create_app_returns_immediately_with_a_dead_upstream(fake_transport):

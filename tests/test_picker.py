@@ -10,6 +10,9 @@ from fastapi import HTTPException
 from backend.config import Settings
 from backend.stores import RecentServedStore
 from src.errors import ResourceNotFoundError
+from src.http_client import JsonHttpClient
+from src.models import GallerySummary
+from src.pools import FeedMode, SearchPool
 
 NOT_FOUND = ResourceNotFoundError("gone")
 TRANSIENT = RuntimeError("upstream hiccup")
@@ -366,3 +369,67 @@ def test_single_flight_shares_the_exception_and_cleans_up():
     with pytest.raises(ResourceNotFoundError):
         picker._get_detail(7)
     assert client.detail_calls == [7, 7]
+
+
+# --- Repeat fix: a restart must not re-serve page 1 ------------------------
+# Regression test for the "same mangas again after refresh" bug, at
+# picker level: two simulated process lifetimes, each with a FRESH
+# pool and a FRESH recent-served store (a restart wipes both), over
+# a scripted transport whose page 1 never changes. Pre-fix, both
+# lifetimes' first batches came from page 1.
+
+
+def _search_payload(ids, num_pages=5):
+    return {
+        "num_pages": num_pages,
+        "result": [
+            {
+                "id": i,
+                "english_title": f"Gallery {i}",
+                "thumbnail": f"galleries/{i}/thumb.jpg",
+            }
+            for i in ids
+        ],
+    }
+
+
+class PoolBackedClient:
+    """The picker client interface over a REAL SearchPool.
+
+    Only the detail/media seams are stubbed (the FakeClient
+    pattern); draws come from the pool under test, so the batch
+    below exercises the genuine cold-start path.
+    """
+
+    def __init__(self, pool):
+        self._pool = pool
+
+    def get_random_english_gallery(self, deadline=None, mode=None):
+        return self._pool.next(mode=mode or FeedMode.RANDOM, deadline=deadline)
+
+    def get_gallery_details(self, gallery_id, deadline=None):
+        return make_detail(gallery_id)
+
+    def build_media_url(self, relative_media_path, deadline=None):
+        return f"https://cdn.example/{relative_media_path}"
+
+    def build_gallery_url(self, gallery):
+        gallery_id = gallery.id if isinstance(gallery, GallerySummary) else gallery
+        return f"https://nhentai.net/g/{gallery_id}/"
+
+
+def test_restart_lifetimes_never_open_with_page_one(fake_transport, monkeypatch):
+    page_one = set(range(1, 26))  # the fixed newest/top-25 cluster
+    for drawn_page, block in ((3, range(500, 525)), (4, range(600, 625))):
+        monkeypatch.setattr(
+            "src.pools.random.randint", lambda a, b, page=drawn_page: page
+        )
+        fake_transport.push_json(_search_payload(page_one, num_pages=5))
+        fake_transport.push_json(_search_payload(block, num_pages=5))
+        pool = SearchPool(JsonHttpClient(), low_water_mark=0)
+        picker = make_picker(PoolBackedClient(pool), recent=RecentServedStore())
+        batch = picker.batch(3)
+        served = {item.id for item in batch.items}
+        assert batch.errors == 0
+        assert served <= set(block)
+        assert not served & page_one
