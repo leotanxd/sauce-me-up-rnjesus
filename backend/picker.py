@@ -9,6 +9,7 @@ client-facing text. All state arrives by injection (client, stores,
 settings), so the policy is testable without HTTP.
 """
 
+import contextvars
 import logging
 import threading
 import time
@@ -20,12 +21,14 @@ from fastapi import HTTPException
 from src.errors import ResourceNotFoundError
 from src.models import GalleryDetail
 from src.pools import FeedMode
+from src.request_context import RequestIdLogFilter
 
 from .config import Settings
 from .schemas import BatchOut, PagesOut, SauceOut
 from .stores import DetailCache, RecentServedStore
 
 logger = logging.getLogger(__name__)
+logger.addFilter(RequestIdLogFilter())
 
 
 class SaucePicker:
@@ -35,11 +38,16 @@ class SaucePicker:
         recent: RecentServedStore,
         details: DetailCache,
         settings: Settings,
+        metrics=None,
     ):
         self._client = client
         self._recent = recent
         self._details = details
         self._settings = settings
+        # Package 4 metrics registry or None: pick outcomes, detail
+        # cache hit/miss, and batch durations are counted when one
+        # is wired in.
+        self._metrics = metrics
         # Detail single-flight (Package 2): gallery_id -> the Future
         # of the one in-flight upstream fetch for it. Guarded by its
         # own lock, held only to look up / register / clear a flight
@@ -51,6 +59,11 @@ class SaucePicker:
         self, gallery_id: int, deadline: float | None = None
     ) -> GalleryDetail:
         hit = self._details.get(gallery_id)
+        if self._metrics is not None:
+            if hit is not None:
+                self._metrics.detail_cache_hit()
+            else:
+                self._metrics.detail_cache_miss()
         if hit is not None:
             return hit
 
@@ -215,6 +228,8 @@ class SaucePicker:
                         "Detail for gallery %s returned 404; re-rolling.",
                         gallery_id,
                     )
+                    if self._metrics is not None:
+                        self._metrics.pick_rerolled()
                     continue
                 except Exception as error:
                     # Transient failure (the transport already retried
@@ -225,13 +240,19 @@ class SaucePicker:
                         gallery_id,
                         error,
                     )
+                    if self._metrics is not None:
+                        self._metrics.pick_rerolled()
                     if fallback is None:
                         fallback = (gallery, gallery_id)
                     continue
 
                 if detail.is_english is False:
+                    if self._metrics is not None:
+                        self._metrics.pick_rerolled()
                     continue  # not English — pick another gallery
 
+                if self._metrics is not None:
+                    self._metrics.pick_served()
                 return self._serve(gallery, detail, deadline=deadline)
 
             if fallback is not None:
@@ -245,6 +266,8 @@ class SaucePicker:
                     "Serving gallery %s without detail verification.",
                     gallery_id,
                 )
+                if self._metrics is not None:
+                    self._metrics.pick_fallback()
                 return self._serve(
                     gallery,
                     GalleryDetail.empty(gallery_id),
@@ -256,12 +279,27 @@ class SaucePicker:
                 detail="Could not find a new English-language gallery in time. Please retry.",
             )
         except HTTPException:
+            if self._metrics is not None:
+                self._metrics.pick_error()
             # A failed pick remembers nothing: release its reservations.
             for gallery_id in reserved:
                 self._recent.forget(gallery_id)
             raise
 
     def batch(self, n: int, mode: FeedMode = FeedMode.RANDOM) -> BatchOut:
+        # Package 4: every batch's wall time lands in the metrics
+        # duration summary, however the batch ends (served, partial,
+        # or the all-failed 502 below).
+        started = time.monotonic()
+        try:
+            return self._batch(n, mode)
+        finally:
+            if self._metrics is not None:
+                self._metrics.observe_batch_duration(
+                    time.monotonic() - started
+                )
+
+    def _batch(self, n: int, mode: FeedMode = FeedMode.RANDOM) -> BatchOut:
         # One overall deadline for the batch: return what was
         # generated in time rather than hanging. (The default n at the
         # route mirrors the frontend's BATCH_SIZE in
@@ -299,8 +337,18 @@ class SaucePicker:
                         errors += 1
                         submitted = n  # deadline cut: stop submitting
                         break
+                    # Picks run on raw executor threads, which do
+                    # NOT inherit contextvars: copy the request
+                    # context in so the picks' log lines carry this
+                    # request's ID (Package 4).
+                    context = contextvars.copy_context()
                     in_flight.append(
-                        executor.submit(self.next, deadline=deadline, mode=mode)
+                        executor.submit(
+                            context.run,
+                            self.next,
+                            deadline=deadline,
+                            mode=mode,
+                        )
                     )
                     submitted += 1
                 if not in_flight:

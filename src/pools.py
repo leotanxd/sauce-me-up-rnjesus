@@ -21,6 +21,7 @@ ready-queue of verified items — background work only ever tops up
 the raw search pools.
 """
 
+import contextvars
 import logging
 import random
 import threading
@@ -29,8 +30,10 @@ from urllib.parse import urlencode
 
 from src.http_client import JsonHttpClient
 from src.models import GallerySummary
+from src.request_context import RequestIdLogFilter
 
 logger = logging.getLogger(__name__)
+logger.addFilter(RequestIdLogFilter())
 
 SEARCH_URL = "https://nhentai.net/api/v2/search"
 
@@ -88,9 +91,13 @@ class SearchPool:
         self,
         http: JsonHttpClient,
         low_water_mark: int = DEFAULT_LOW_WATER_MARK,
+        metrics=None,
     ):
         self._http = http
         self._low_water_mark = low_water_mark
+        # Package 4 metrics registry or None: refill counts per mode
+        # (background refills counted additionally as their subset).
+        self._metrics = metrics
         self._states: dict[FeedMode, _ModeState] = {
             m: _ModeState() for m in FeedMode
         }
@@ -148,6 +155,11 @@ class SearchPool:
                 "No English-language galleries were returned by the API."
             )
         random.shuffle(pool)
+        if self._metrics is not None:
+            # _fetch_page is only ever called to refill a pool (the
+            # synchronous path, the background thread, warm-up), so
+            # a successful fetch IS a refill.
+            self._metrics.pool_refill(mode.value)
         return pool
 
     def _background_refill(self, mode: FeedMode) -> None:
@@ -160,6 +172,8 @@ class SearchPool:
         page = None
         try:
             page = self._fetch_page(mode)
+            if self._metrics is not None:
+                self._metrics.pool_background_refill(mode.value)
         except Exception:
             logger.warning(
                 "Background refill of the %s search pool failed; "
@@ -213,9 +227,12 @@ class SearchPool:
                 state.condition.notify_all()
             # Loop around and pop from the refilled pool.
         if start_background:
+            # Run the refill in the drawing request's context so its
+            # log lines carry that request's ID (Package 4); the
+            # refill itself is unaffected by the context copy.
+            context = contextvars.copy_context()
             threading.Thread(
-                target=self._background_refill,
-                args=(mode,),
+                target=lambda: context.run(self._background_refill, mode),
                 name=f"searchpool-refill-{mode.value}",
                 daemon=True,
             ).start()

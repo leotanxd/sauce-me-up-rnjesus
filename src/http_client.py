@@ -36,8 +36,10 @@ from collections.abc import Mapping
 import httpx
 
 from src.errors import ResourceNotFoundError
+from src.request_context import RequestIdLogFilter
 
 logger = logging.getLogger(__name__)
+logger.addFilter(RequestIdLogFilter())
 
 USER_AGENT = (
     "SauceMeUpRNJesus/1.0 "
@@ -103,7 +105,12 @@ class JsonHttpClient:
         budget_burst: int = DEFAULT_BUDGET_BURST,
         clock=time.monotonic,
         transport=None,
+        metrics=None,
     ):
+        # Package 4 metrics registry (src.metrics.Metrics) or None:
+        # every attempt, retry, 429, cooldown activation, and budget
+        # exhaustion is counted when one is wired in.
+        self._metrics = metrics
         # The wire seam: anything with get(url, headers, timeout)
         # returning a response with .status_code/.headers/.content
         # and raising httpx.TransportError on network failure. The
@@ -150,9 +157,14 @@ class JsonHttpClient:
 
     def _set_cooldown(self, seconds: float) -> None:
         with self._state_lock:
-            self._cooldown_until = max(
-                self._cooldown_until, self._clock() + seconds
-            )
+            new_until = self._clock() + seconds
+            activated = new_until > self._cooldown_until
+            self._cooldown_until = max(self._cooldown_until, new_until)
+        if activated and self._metrics is not None:
+            # Only a window that actually moves counts as an
+            # activation; a 429 landing inside an already-longer
+            # window adds nothing new to know.
+            self._metrics.cooldown_activated()
 
     def _check_cooldown(self) -> None:
         with self._state_lock:
@@ -195,6 +207,8 @@ class JsonHttpClient:
                 self._budget_tokens + elapsed * rate / 60.0,
             )
             if self._budget_tokens < 1.0:
+                if self._metrics is not None:
+                    self._metrics.budget_exhausted()
                 raise RuntimeError(
                     "Upstream request budget exhausted; failing fast "
                     "to bound total upstream pressure."
@@ -219,6 +233,21 @@ class JsonHttpClient:
             return float(retry_after)
         except ValueError:
             return None
+
+    @staticmethod
+    def _endpoint_class(url: str) -> str:
+        """The metrics label for a URL: search / detail / cdn / other.
+
+        Path classes only — never the gallery ID or query string,
+        so the counters stay low-cardinality.
+        """
+        if "/api/v2/search" in url:
+            return "search"
+        if "/api/v2/galleries/" in url:
+            return "detail"
+        if "/api/v2/cdn" in url:
+            return "cdn"
+        return "other"
 
     def get_json(self, url: str, deadline: float | None = None) -> dict:
         """Request JSON data without authentication, with retries.
@@ -249,7 +278,11 @@ class JsonHttpClient:
                 raise RuntimeError("Upstream request deadline exceeded.")
             time.sleep(delay)
 
+        endpoint_class = self._endpoint_class(url)
+
         for attempt in range(1, MAX_RETRIES + 1):
+            if attempt > 1 and self._metrics is not None:
+                self._metrics.upstream_retry()
             left = remaining()
             if left is not None and left <= 0:
                 raise RuntimeError("Upstream request deadline exceeded.")
@@ -275,6 +308,10 @@ class JsonHttpClient:
                 # Connection failures and timeouts (TimeoutException
                 # is a TransportError) are transient: retried, then a
                 # RuntimeError, exactly as the urllib path behaved.
+                if self._metrics is not None:
+                    self._metrics.upstream_call(
+                        endpoint_class, "network_error"
+                    )
                 last_error = error
 
                 if attempt < MAX_RETRIES:
@@ -287,6 +324,13 @@ class JsonHttpClient:
                 ) from error
 
             status_code = response.status_code
+
+            if self._metrics is not None:
+                self._metrics.upstream_call(
+                    endpoint_class, f"{status_code // 100}xx"
+                )
+                if status_code == 429:
+                    self._metrics.upstream_rate_limited()
 
             if status_code == 200:
                 try:
