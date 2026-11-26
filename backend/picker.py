@@ -10,9 +10,10 @@ settings), so the policy is testable without HTTP.
 """
 
 import logging
+import threading
 import time
 from collections import deque
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 
 from fastapi import HTTPException
 
@@ -39,6 +40,12 @@ class SaucePicker:
         self._recent = recent
         self._details = details
         self._settings = settings
+        # Detail single-flight (Package 2): gallery_id -> the Future
+        # of the one in-flight upstream fetch for it. Guarded by its
+        # own lock, held only to look up / register / clear a flight
+        # — never across the fetch itself.
+        self._detail_flights: dict[int, Future] = {}
+        self._detail_flights_lock = threading.Lock()
 
     def _get_detail(
         self, gallery_id: int, deadline: float | None = None
@@ -46,9 +53,69 @@ class SaucePicker:
         hit = self._details.get(gallery_id)
         if hit is not None:
             return hit
-        detail = self._client.get_gallery_details(gallery_id, deadline=deadline)
-        self._details.put(gallery_id, detail)
-        return detail
+
+        # Join or start the one fetch for this gallery. Concurrent
+        # picks (batch concurrency) and a pick racing /pages for the
+        # same gallery otherwise each spend a detail call — the
+        # scarcest upstream resource — on identical work.
+        with self._detail_flights_lock:
+            flight = self._detail_flights.get(gallery_id)
+            if flight is None:
+                flight = Future()
+                self._detail_flights[gallery_id] = flight
+                owner = True
+            else:
+                owner = False
+
+        if owner:
+            try:
+                detail = self._client.get_gallery_details(
+                    gallery_id, deadline=deadline
+                )
+                # Cache BEFORE completing the flight: a caller who
+                # arrives after the flight is cleared hits the cache
+                # instead of starting a second fetch.
+                self._details.put(gallery_id, detail)
+                flight.set_result(detail)
+                return detail
+            except BaseException as error:
+                # Waiters receive this same exception (a 404 stays a
+                # ResourceNotFoundError, a transient failure stays
+                # transient) — sharing the verdict is the point.
+                flight.set_exception(error)
+                raise
+            finally:
+                with self._detail_flights_lock:
+                    if self._detail_flights.get(gallery_id) is flight:
+                        del self._detail_flights[gallery_id]
+
+        # Waiter: share the owner's fetch, but only until OUR
+        # deadline — the fetch continues for the other callers, and
+        # this caller treats the wait the way it treats any other
+        # transient detail failure (re-roll / 502 upstream).
+        try:
+            timeout = (
+                None
+                if deadline is None
+                else max(0.0, deadline - time.monotonic())
+            )
+            return flight.result(timeout=timeout)
+        except TimeoutError:
+            if flight.done():
+                raise  # the fetch's own TimeoutError, not our wait
+            raise RuntimeError(
+                "Timed out waiting for the in-flight detail fetch "
+                f"for gallery {gallery_id}."
+            ) from None
+        except CancelledError:
+            # The flight bookkeeping itself failed (the shared
+            # future was cancelled): fall back to fetching directly
+            # rather than failing a pick over shared-state plumbing.
+            detail = self._client.get_gallery_details(
+                gallery_id, deadline=deadline
+            )
+            self._details.put(gallery_id, detail)
+            return detail
 
     def _serve(
         self, gallery, detail: GalleryDetail, deadline: float | None = None

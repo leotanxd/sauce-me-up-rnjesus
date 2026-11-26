@@ -250,3 +250,129 @@ def test_batch_returns_within_budget_when_a_pick_hangs():
     assert elapsed < 2.5
     assert result.errors >= 1
     assert sorted(item.id for item in result.items) == [2, 3]
+
+
+# --- Package 2: detail single-flight --------------------------------------
+
+
+class _GatedDetailClient(FakeClient):
+    """Detail fetches pause at a gate, so a test can pile concurrent
+    callers onto one in-flight fetch before releasing it."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def get_gallery_details(self, gallery_id, deadline=None):
+        self.entered.set()
+        self.release.wait(timeout=10)
+        return super().get_gallery_details(gallery_id, deadline=deadline)
+
+
+def _call_in_thread(fn, results, errors):
+    try:
+        results.append(fn())
+    except Exception as error:  # collected and asserted by the test
+        errors.append(error)
+
+
+def test_single_flight_eight_callers_share_one_fetch():
+    client = _GatedDetailClient()
+    picker = make_picker(client)
+    results: list = []
+    errors: list = []
+
+    owner = threading.Thread(
+        target=_call_in_thread,
+        args=(lambda: picker._get_detail(7), results, errors),
+    )
+    owner.start()
+    assert client.entered.wait(timeout=5)  # the one fetch is in flight
+
+    waiters = [
+        threading.Thread(
+            target=_call_in_thread,
+            args=(lambda: picker._get_detail(7), results, errors),
+        )
+        for _ in range(7)
+    ]
+    for thread in waiters:
+        thread.start()
+    time.sleep(0.3)  # let every waiter pile onto the flight
+    client.release.set()
+    owner.join(timeout=5)
+    for thread in waiters:
+        thread.join(timeout=5)
+
+    assert errors == []
+    assert len(results) == 8
+    assert client.detail_calls == [7]  # exactly ONE upstream fetch
+    assert all(result is results[0] for result in results)  # same object
+    # And the completed flight populated the cache for later callers.
+    assert picker._get_detail(7) is results[0]
+    assert client.detail_calls == [7]
+
+
+def test_single_flight_waiter_deadline_stops_waiting_fetch_continues():
+    client = _GatedDetailClient()
+    picker = make_picker(client)
+    results: list = []
+    errors: list = []
+
+    owner = threading.Thread(
+        target=_call_in_thread,
+        args=(lambda: picker._get_detail(7), results, errors),
+    )
+    owner.start()
+    assert client.entered.wait(timeout=5)
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError):
+        picker._get_detail(7, deadline=time.monotonic() + 0.2)
+    # The waiter gave up promptly; the owner's fetch is still gated.
+    assert time.monotonic() - started < 2.0
+    assert not results and not errors
+
+    client.release.set()
+    owner.join(timeout=5)
+    assert errors == []
+    assert len(results) == 1
+    assert client.detail_calls == [7]  # still exactly one fetch
+    # The finished fetch landed in the cache for everyone after.
+    assert picker._get_detail(7) is results[0]
+    assert client.detail_calls == [7]
+
+
+def test_single_flight_shares_the_exception_and_cleans_up():
+    client = _GatedDetailClient(details={7: NOT_FOUND})
+    picker = make_picker(client)
+    results: list = []
+    errors: list = []
+
+    threads = [
+        threading.Thread(
+            target=_call_in_thread,
+            args=(lambda: picker._get_detail(7), results, errors),
+        )
+        for _ in range(4)
+    ]
+    for thread in threads:
+        thread.start()
+    assert client.entered.wait(timeout=5)
+    time.sleep(0.3)  # all four callers are on the one flight
+    client.release.set()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert results == []
+    assert len(errors) == 4
+    # The verdict is shared verbatim: a 404 stays a 404 for waiters.
+    assert all(isinstance(e, ResourceNotFoundError) for e in errors)
+    assert client.detail_calls == [7]
+
+    # The failed flight was cleaned up: a later caller retries the
+    # fetch instead of joining a dead flight or reading a cached error.
+    with pytest.raises(ResourceNotFoundError):
+        picker._get_detail(7)
+    assert client.detail_calls == [7, 7]
