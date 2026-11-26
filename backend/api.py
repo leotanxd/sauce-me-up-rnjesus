@@ -37,8 +37,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from src.cdn import MediaUrlBuilder
 from src.client import NhentaiClient
 from src.http_client import JsonHttpClient
+from src.pools import SearchPool
 
 from .config import Settings
 from .middleware import CacheHeadersMiddleware
@@ -60,7 +62,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         budget_rate_per_minute=settings.global_budget_rate_per_minute,
         budget_burst=settings.global_budget_burst,
     )
-    client = NhentaiClient(http=http)
+    # Package 3 tunables ride along: the pools' background-refill
+    # low-water mark and the CDN config refresh TTL.
+    client = NhentaiClient(
+        http=http,
+        media=MediaUrlBuilder(
+            http, config_ttl_seconds=settings.cdn_config_ttl_seconds
+        ),
+        pool=SearchPool(http, low_water_mark=settings.pool_low_water_mark),
+    )
     picker = SaucePicker(
         client=client,
         recent=RecentServedStore(maxlen=settings.recent_max),

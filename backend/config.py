@@ -40,6 +40,15 @@ class Settings:
     # tighten with Package 4's metrics, not with folklore.
     global_budget_rate_per_minute: float = 120.0
     global_budget_burst: int = 40
+    # Search-pool low-water mark (Package 3): when a draw leaves a
+    # mode's pool below this many galleries, a background thread
+    # refills it, so draws rarely wait on a synchronous refill. 0
+    # disables background refills.
+    pool_low_water_mark: int = 5
+    # CDN config refresh (Package 3): the /api/v2/cdn server lists
+    # are refetched after this long instead of being cached forever;
+    # a failed refresh serves the stale config.
+    cdn_config_ttl_seconds: float = 3600.0
     # /api/health freshness window: an upstream success within this
     # many seconds reports "ok"; older is "stale"; none yet is
     # "unknown". 15 min matches the free service's idle spin-down, so
