@@ -95,7 +95,8 @@ Three parts: a Python core package, a FastAPI backend, and a React
 frontend. The backend serves the API and the built frontend as one
 service.
 
-- **`src/`** — an installable Python package (see `pyproject.toml`)
+- **`api/sauce_me_up/upstream/`** — the upstream client inside the
+  installable Python package (see `api/pyproject.toml`)
   that talks to the upstream catalogue (the nhentai API v2):
   - `http_client` — JSON transport with retry/backoff and
     deadline-aware timeouts.
@@ -107,8 +108,11 @@ service.
     live here.
   - `cdn` — builds media URLs across the upstream's CDN mirrors.
   - `client` — the `NhentaiClient` facade the backend uses.
-  - `cli` — a small command-line front end (`python -m src.cli`).
-- **`backend/`** — FastAPI, composed in `create_app()`:
+- **`api/sauce_me_up/`** — FastAPI, composed in `create_app()`. The
+  package top level also holds `cli` — a small command-line front
+  end (`python -m sauce_me_up.cli`) — plus the cross-cutting
+  `metrics` registry and `request_context` request-ID context,
+  shared by the app and upstream layers:
   - `picker` — the serving service. Picks use **reserve-at-draw**
     concurrency: an ID is atomically checked-and-reserved under a
     lock, all network work happens outside the lock, and batches
@@ -131,7 +135,7 @@ service.
     durations) served as JSON; every request carries an
     `X-Request-ID` that also prefixes its server log lines, so a
     client-visible failure can be matched to the logs.
-- **`frontend/`** — Vite + React + Tailwind. All state lives in
+- **`web/`** — Vite + React + Tailwind. All state lives in
   hooks — `useSauceFeed` (feed, modes, blur, dim), `useGalleryPages`
   (per-card paging), `useHorizontalSwipe` (swipe paging),
   `useImageZoom` (per-card image-only zoom) and `useUiZoom`
@@ -141,11 +145,11 @@ service.
 Project layout:
 
 ```
-src/          Python core package (upstream client)
-backend/      FastAPI app (api, picker, stores, routers)
-frontend/     React feed UI (hooks own the state)
-tests/        Backend pytest suite (fully offline)
-Dockerfile    Single-service image (see DEPLOY.md)
+web/          React feed UI (hooks own the state)
+api/          Python package: sauce_me_up (FastAPI app + upstream client)
+api/tests/    Backend pytest suite (fully offline)
+docs/         Deployment walkthrough (DEPLOY.md)
+Dockerfile    Single-service image (see docs/DEPLOY.md)
 ```
 
 ## Development
@@ -153,29 +157,29 @@ Dockerfile    Single-service image (see DEPLOY.md)
 Prerequisites: Python ≥ 3.11 and Node 24.
 
 ```bash
-pip install -e ".[test]"   # the package (incl. httpx) plus test deps (pytest)
-                           # runtime only: pip install -e .
-                           # reproducible installs: requirements.txt /
-                           # requirements-dev.txt are hash-locked
-                           # (pip-compile output — regenerate, don't
-                           # hand-edit; see the headers in those files)
+cd api && pip install -e ".[test]"   # the package (incl. httpx) plus test deps (pytest)
+                                     # runtime only: pip install -e .
+                                     # reproducible installs: requirements.txt /
+                                     # requirements-dev.txt are hash-locked
+                                     # (pip-compile output — regenerate, don't
+                                     # hand-edit; see the headers in those files)
 
-uvicorn backend.api:app --port 8000        # API (+ built frontend, if present)
+uvicorn sauce_me_up.app:app --port 8000    # API (+ built frontend, if present) — from api/
 
-cd frontend && npm ci && npm run dev       # dev UI at localhost:5173
+cd web && npm ci && npm run dev            # dev UI at localhost:5173
                                            # (CORS is pre-allowed)
 
-python -m src.cli                          # command-line front end
+cd api && python -m sauce_me_up.cli        # command-line front end
 ```
 
 ## Tests & CI
 
 ```bash
-pytest                             # backend suite (tests/, fully offline —
+cd api && pytest                   # backend suite (api/tests/, fully offline —
                                    # fake transport and fake client)
-ruff check src backend tests       # Python lint (+ ruff format --check)
-mypy src backend                   # Python type check (permissive config)
-cd frontend && npm test            # Vitest hook + component tests
+ruff check sauce_me_up tests       # Python lint (+ ruff format --check) — from api/
+mypy sauce_me_up                   # Python type check (permissive config) — from api/
+cd web && npm test                 # Vitest hook + component tests
 npm run typecheck                  # TypeScript, no emit
 npm run lint                       # eslint (flat config)
 npm run build                      # production bundle
@@ -188,7 +192,7 @@ CI runs on GitHub Actions (`.github/workflows/ci.yml`) on pushes to
 from the hash-locked `requirements-dev.txt`), frontend typecheck +
 test + build on Node 24, a lint job (ruff + mypy on the Python side,
 eslint on the frontend), and a Playwright E2E smoke suite
-(`frontend/e2e/`) against the real built app with a stub upstream.
+(`web/e2e/`) against the real built app with a stub upstream.
 
 ## Deployment
 
@@ -199,7 +203,7 @@ honours `$PORT` and a healthcheck built on Python's urllib. It
 deploys to Render's free plan, auto-deploying on every push to
 `main`. One caveat: the no-repeat memory and caches live
 per-process, so the service runs a single worker/instance. See
-[DEPLOY.md](DEPLOY.md) for the full walkthrough.
+[docs/DEPLOY.md](docs/DEPLOY.md) for the full walkthrough.
 
 ## Credits
 
