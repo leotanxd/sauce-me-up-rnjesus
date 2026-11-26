@@ -914,3 +914,69 @@ describe("SauceCard image zoom", () => {
     expect(region.textContent).toBe("Page 1 of 12")
   })
 })
+
+describe("SauceCard image hints", () => {
+  it("decoding=async on the shown image; fetchPriority=high only while the card is active", () => {
+    const { container } = renderCard(longTitle)
+    const img = container.querySelector("img")!
+    expect(img.getAttribute("decoding")).toBe("async")
+    expect(img.getAttribute("fetchpriority")).toBeNull()
+
+    // The card becomes the viewed one (its observer reports it
+    // filling the viewport): the priority hint switches on.
+    act(() => {
+      IntersectionObserverStub.latest().trigger([
+        { isIntersecting: true, intersectionRatio: 1 },
+      ])
+    })
+    expect(img.getAttribute("fetchpriority")).toBe("high")
+    expect(img.getAttribute("decoding")).toBe("async")
+  })
+})
+
+describe("SauceCard memoization", () => {
+  it("skips re-rendering when the parent re-renders with identical props", () => {
+    // The card body reads sauce.title on every render (the
+    // condensed-title computation); a counting getter makes those
+    // renders observable without touching the component.
+    let titleReads = 0
+    const tracked: Sauce = {
+      id: 42,
+      get title() {
+        titleReads += 1
+        return "Tracked title here"
+      },
+      url: "https://nhentai.net/g/42/",
+      firstImageUrl: "https://img.example/42.jpg",
+      pageCount: 3,
+    }
+    const onToggleBlur = () => {}
+    const onToggleDim = () => {}
+    function Harness({ tick, blurred }: { tick: number; blurred: boolean }) {
+      return (
+        <div data-tick={tick}>
+          <SauceCard
+            sauce={tracked}
+            blurred={blurred}
+            onToggleBlur={onToggleBlur}
+            dimmed={false}
+            onToggleDim={onToggleDim}
+          />
+        </div>
+      )
+    }
+    const { rerender } = render(<Harness tick={0} blurred={true} />)
+    const afterMount = titleReads
+    expect(afterMount).toBeGreaterThan(0)
+
+    // A parent re-render with the card's props unchanged (what
+    // SauceFeed does on every scroll settle / top-up) must not
+    // re-run the card body.
+    rerender(<Harness tick={1} blurred={true} />)
+    expect(titleReads).toBe(afterMount)
+
+    // A real prop change still re-renders.
+    rerender(<Harness tick={1} blurred={false} />)
+    expect(titleReads).toBeGreaterThan(afterMount)
+  })
+})

@@ -33,8 +33,11 @@ const region = (container: HTMLElement) => container.querySelector("[aria-live='
 
 // Dim is rendered per card now (it scrolls with the card), so a
 // loaded feed shows one Dim: OFF button per mounted card — never a
-// single feed-level pill.
-const dimOffButtons = () => screen.getAllByRole("button", { name: "Dim: OFF" })
+// single feed-level pill. Mounted neighbour cards are aria-hidden
+// (off-screen treatment), so presence checks must include hidden
+// elements — `hidden: true` is exactly that.
+const dimOffButtons = () =>
+  screen.getAllByRole("button", { name: "Dim: OFF", hidden: true })
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -54,7 +57,11 @@ describe("SauceFeed live region", () => {
     await waitFor(() => expect(dimOffButtons()).toHaveLength(3))
     expect(region(container)?.textContent).toBe("")
 
-    mockBatch.mockResolvedValue([sauce(10), sauce(11)])
+    // A full 3-item batch: a shorter first batch would put the
+    // fresh feed inside the top-up zone (second-to-last = first
+    // card), and its top-up against this standing mock would
+    // legitimately exhaust and announce that instead.
+    mockBatch.mockResolvedValue([sauce(10), sauce(11), sauce(12)])
     fireEvent.click(screen.getByRole("button", { name: "Popular" }))
     await waitFor(() => expect(region(container)?.textContent).toBe("Popular feed"))
   })
@@ -67,6 +74,46 @@ describe("SauceFeed live region", () => {
         "Could not load sauce. Check your connection and try again.",
       ),
     )
+  })
+})
+
+describe("SauceFeed a11y: mode label and off-screen cards", () => {
+  it("labels <main> for the current mode and updates the label on switch", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    const { container } = render(<SauceFeed />)
+    await waitFor(() => expect(dimOffButtons()).toHaveLength(3))
+    expect(container.querySelector("main")?.getAttribute("aria-label")).toBe(
+      "Random sauce feed",
+    )
+
+    mockBatch.mockResolvedValue([sauce(10), sauce(11), sauce(12)])
+    fireEvent.click(screen.getByRole("button", { name: "Popular" }))
+    await waitFor(() =>
+      expect(container.querySelector("main")?.getAttribute("aria-label")).toBe(
+        "Popular sauce feed",
+      ),
+    )
+  })
+
+  it("keeps mounted neighbour cards inert and aria-hidden; the current card stays live", async () => {
+    mockBatch.mockResolvedValue([sauce(1), sauce(2), sauce(3)])
+    const { container } = render(<SauceFeed />)
+    await waitFor(() => expect(dimOffButtons()).toHaveLength(3))
+
+    const articles = [...container.querySelectorAll("article")]
+    expect(articles).toHaveLength(3)
+    // The current card (index 0) is fully exposed and interactive.
+    expect(articles[0].getAttribute("aria-hidden")).toBeNull()
+    expect((articles[0] as HTMLElement).inert).toBe(false)
+    // Its mounted neighbours are out of the tab order and the
+    // accessibility tree until scrolled to.
+    for (const article of articles.slice(1)) {
+      expect(article.getAttribute("aria-hidden")).toBe("true")
+      expect((article as HTMLElement).inert).toBe(true)
+    }
+    // Role queries agree: only the current card's controls are
+    // reachable without opting into hidden elements.
+    expect(screen.getAllByRole("button", { name: "Dim: OFF" })).toHaveLength(1)
   })
 })
 

@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -23,6 +24,15 @@ type Props = {
   dimmed: boolean
   /** Toggle dim mode; this card's Dim pill stays available while dimmed. */
   onToggleDim: () => void
+  /**
+   * The feed's current card (the one at the scroll position).
+   * Mounted neighbours get current=false: they are made inert and
+   * aria-hidden, so keyboard and screen-reader users never meet
+   * controls for a card they cannot see — the mounted-card
+   * counterpart of the feed's aria-hidden placeholders. A card
+   * rendered standalone is its own current card (the default).
+   */
+  current?: boolean
 }
 
 /**
@@ -36,10 +46,21 @@ type Props = {
  * as a button in the right-side column that expands the full title
  * in a narrow panel; a short title is plain text there.
  */
-export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onToggleDim }: Props) {
+function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onToggleDim, current = true }: Props) {
   const { cardRef, isActive, currentSrc, pageIdx, totalPages, goToPage, loadingPages } =
     useGalleryPages(sauce)
   const [titleExpanded, setTitleExpanded] = useState(false)
+
+  // Off-screen treatment for mounted neighbours (see Props.current):
+  // inert takes the card's controls out of the tab order (and, in
+  // browsers that support it, the accessibility tree — aria-hidden
+  // on the article covers the tree side explicitly). React 18 has
+  // no inert prop, so it is set on the element directly; the
+  // property is the API browsers expose for it.
+  useEffect(() => {
+    const el = cardRef.current
+    if (el) el.inert = !current
+  }, [current, cardRef])
 
   // Any page turn collapses an expanded title and resets the
   // image zoom. Buttons and swipe go through `page` below;
@@ -322,7 +343,11 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
   const condensedTitle = `${words.slice(0, 4).join(" ")} …`
 
   return (
-    <article ref={cardRef} className="sauce-card relative flex items-center justify-center bg-black overflow-hidden">
+    <article
+      ref={cardRef}
+      aria-hidden={!current || undefined}
+      className="sauce-card relative flex items-center justify-center bg-black overflow-hidden"
+    >
       {/* Outgoing page, kept mounted underneath during a slide so
           the incoming page slides over a real picture, never over
           black. Purely visual — hidden from assistive tech. */}
@@ -332,6 +357,7 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
             src={underSrc}
             alt=""
             draggable={false}
+            decoding="async"
             className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
           />
         </div>
@@ -380,6 +406,8 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
                 alt={blurred ? "" : sauce.title}
                 aria-hidden={blurred}
                 draggable={false}
+                decoding="async"
+                fetchPriority={isActive ? "high" : undefined}
                 onLoad={onShownImgLoad}
                 onError={() => setImgError(true)}
                 className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} block h-auto w-full select-none`}
@@ -401,6 +429,8 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
                 alt={blurred ? "" : sauce.title}
                 aria-hidden={blurred}
                 draggable={false}
+                decoding="async"
+                fetchPriority={isActive ? "high" : undefined}
                 onLoad={onShownImgLoad}
                 onError={() => setImgError(true)}
                 className={`sauce-img ${blurred ? "is-blurred" : "is-clear"} absolute inset-0 h-full w-full object-contain select-none`}
@@ -589,3 +619,12 @@ export default function SauceCard({ sauce, blurred, onToggleBlur, dimmed, onTogg
     </article>
   )
 }
+
+// Memoized: SauceFeed re-renders on every scroll settle (activeIndex),
+// top-up and announcement, and up to 5 cards are mounted at once.
+// The props are exactly what the default shallow compare handles —
+// primitives, the identity-stable `sauce` object from feed state,
+// and useSauceFeed's stable useCallback toggles — so a card whose
+// props did not change skips the re-render entirely. (A card's own
+// state — paging, zoom, title — is internal and unaffected.)
+export default memo(SauceCard)

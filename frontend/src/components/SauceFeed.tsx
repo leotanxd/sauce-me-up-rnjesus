@@ -101,6 +101,7 @@ export default function SauceFeed() {
     return (
       <main
         key={popular ? "popular" : "random"}
+        aria-label={popular ? "Popular sauce feed" : "Random sauce feed"}
         className="feed-swap-in h-[100dvh] bg-black text-white flex flex-col items-center justify-center gap-3"
       >
         {liveRegion}
@@ -181,7 +182,7 @@ export default function SauceFeed() {
         className={`sauce-feed feed-swap-in transition-[opacity,transform] duration-[160ms] ease-in ${
           leaving ? "opacity-0 translate-y-1 pointer-events-none" : ""
         }`}
-        aria-label="Random sauce feed"
+        aria-label={popular ? "Popular sauce feed" : "Random sauce feed"}
       >
         {items.map((sauce, i) =>
           // Windowing: only the active card ±2 is mounted. Far cards
@@ -198,6 +199,7 @@ export default function SauceFeed() {
               onToggleBlur={toggleBlur}
               dimmed={dimmed}
               onToggleDim={toggleDim}
+              current={i === activeIndex}
             />
           ),
         )}
